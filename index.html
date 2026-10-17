@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <script src="devconsole.js"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>HomeOps Planner</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+<!-- WCT-UNSHIPPED-BANNER:START -->
+<div id="wct-unshipped-banner" style="background:linear-gradient(90deg,#c0392b,#e74c3c);color:#fff;padding:5px 12px;font-family:system-ui,-apple-system,sans-serif;font-weight:bold;font-size:12px;line-height:1.2;position:fixed;top:0;left:0;right:0;z-index:999999;box-shadow:0 1px 4px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;gap:12px;min-height:34px;box-sizing:border-box;">
+  <span>&#9888;&#65039; Not Secured &ndash; Ship in Forge before entering CUI/sensitive data</span>
+  <span style="display:inline-flex;gap:6px;flex:none;">
+    <button type="button" id="wct-devconsole-button" title="Open Dev Console" style="border:1px solid rgba(255,255,255,.7);border-radius:4px;background:#20252b;color:#fff;padding:3px 8px;font:700 11px/1.2 system-ui,-apple-system,sans-serif;cursor:pointer;">Dev Console</button>
+    <button type="button" id="wct-testrecorder-button" title="Open Test Recorder" style="border:1px solid rgba(255,255,255,.7);border-radius:4px;background:#20252b;color:#fff;padding:3px 8px;font:700 11px/1.2 system-ui,-apple-system,sans-serif;cursor:pointer;">Test Recorder</button>
+  </span>
+</div>
+<style id="wct-unshipped-banner-style">body { padding-top: 38px !important; } @keyframes wct-devconsole-error-flash { 0%,100% { background:#20252b; box-shadow:none; } 25%,75% { background:#ffd43b; color:#1a1a1a; box-shadow:0 0 0 4px rgba(255,212,59,.45); } } #wct-devconsole-button.wct-devconsole-error-flash { animation:wct-devconsole-error-flash .6s ease-in-out 5; }</style>
+<!-- WCT-UNSHIPPED-BANNER:END -->
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">H</div>
+        <div>
+          <h1>HomeOps</h1>
+          <p>Home Planner & Maintenance</p>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Primary navigation">
+        <button class="nav-btn is-active" data-view="dashboard">Dashboard</button>
+        <button class="nav-btn" data-view="inventory">Home Inventory</button>
+        <button class="nav-btn" data-view="rooms">Rooms & Finishes</button>
+        <button class="nav-btn" data-view="projects">Projects</button>
+        <button class="nav-btn" data-view="maintenance">Maintenance</button>
+        <button class="nav-btn" data-view="reports">Reports</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-secondary btn-block" data-action="export-backup">
+          Export Backup
+        </button>
+
+        <label class="btn btn-secondary btn-block file-label">
+          Import Backup
+          <input id="backup-import" type="file" accept=".json">
+        </label>
+
+        <button class="btn btn-danger btn-block" data-action="reset-data">
+          Reset Demo Data
+        </button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">HOME MANAGEMENT WORKSPACE</p>
+          <h2 id="page-title">Home Dashboard</h2>
+        </div>
+
+        <div class="topbar-actions">
+          <span id="save-status" class="save-status">Saved locally</span>
+          <button class="btn btn-primary" data-action="quick-add-task">
+            + Add Maintenance Task
+          </button>
+        </div>
+      </header>
+
+      <section id="app-alerts" class="alerts-region" aria-live="polite"></section>
+
+      <section id="view-root" class="view-root"></section>
+
+      <section class="audit-panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">SYSTEM STATUS</p>
+            <h3>Audit / Run Log</h3>
+          </div>
+          <button class="btn btn-ghost" data-action="clear-audit-log">Clear Log</button>
+        </div>
+        <div id="audit-log" class="audit-log"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Optional CDN dependencies. App still functions when either CDN is unavailable. -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <script src="js/00-core.js"></script>
+  <script src="js/01-dom.js"></script>
+  <script src="js/02-utils.js"></script>
+  <script src="js/03-ingest-xlsx.js"></script>
+  <script src="js/04-clean.js"></script>
+  <script src="js/05-model.js"></script>
+  <script src="js/06-analytics.js"></script>
+  <script src="js/07-charts.js"></script>
+  <script src="js/08-tables.js"></script>
+  <script src="js/09-exports.js"></script>
+  <script src="js/99-controller.js"></script>
+    <script src="testRecorder.js"></script>
+</body>
+</html>
