@@ -1,673 +1,650 @@
 (function () {
   "use strict";
 
+  var D = function () { return APP.State.data; };
+  var U = APP.Utils;
+
+  var ROUTES = {
+    dashboard: function (m) { return APP.Views.dashboard(m); },
+    locations: function (m, r) { return r.id ? APP.Views.location(m, r.id) : APP.Views.locations(m); },
+    inventory: function (m, r) { return r.id ? APP.Views.item(m, r.id) : APP.Views.inventory(m); },
+    maintenance: function (m) { return APP.Views.maintenance(m); },
+    warranties: function (m) { return APP.Views.warranties(m); },
+    paints: function (m) { return APP.Views.paints(m); },
+    projects: function (m, r) { return r.id ? APP.Views.project(m, r.id) : APP.Views.projects(m); },
+    settings: function (m, r) {
+      var sub = { home: "settingsHome", notifications: "settingsNotifications", users: "settingsUsers", data: "settingsData", activity: "settingsActivity" }[r.id];
+      return sub ? APP.Views[sub](m) : APP.Views.settings(m);
+    }
+  };
+
+  // Which bottom-nav tab is highlighted for each route.
+  var NAV_FOR = { maintenance: "dashboard", warranties: "dashboard", paints: "locations" };
+
   APP.Controller = {
     init: function () {
       APP.Dom.init();
+      APP.Dom.queryAll("[data-icon]").forEach(function (el) {
+        el.innerHTML = APP.Icons.svg(el.getAttribute("data-icon"));
+      });
       APP.Core.load();
-
+      APP.Controller.applyTheme();
       APP.Controller.bindEvents();
-      APP.Controller.render();
-      APP.Core.addAudit("info", "Application loaded.");
+      APP.Controller.route();
       APP.Core.save();
+      APP.Reminders.start();
+      APP.Controller.registerServiceWorker();
+    },
+
+    // Enables "Add to Home Screen" and offline use. Browsers only allow this on https:// or localhost.
+    registerServiceWorker: function () {
+      if (!("serviceWorker" in navigator) || !/^https:|^http:\/\/(localhost|127\.0\.0\.1)/.test(location.href)) {
+        return;
+      }
+      navigator.serviceWorker.register("sw.js").catch(function (error) {
+        APP.Core.addAudit("warning", "Offline mode unavailable: " + error.message);
+      });
     },
 
     bindEvents: function () {
-      APP.Dom.onDocumentClick(APP.Controller.handleClick);
-      APP.Dom.onDocumentSubmit(APP.Controller.handleSubmit);
-      APP.Dom.onDocumentInput(APP.Controller.handleInput);
-      APP.Dom.onDocumentChange(APP.Controller.handleChange);
+      document.addEventListener("click", APP.Controller.handleClick);
+      document.addEventListener("submit", APP.Controller.handleSubmit);
+      document.addEventListener("input", APP.Controller.handleInput);
+      document.addEventListener("change", APP.Controller.handleChange);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && APP.State.ui.sheet) {
+          APP.Dom.closeSheet();
+        }
+      });
+      window.addEventListener("hashchange", function () {
+        APP.Controller.route();
+        window.scrollTo(0, 0);
+      });
+      if (window.matchMedia) {
+        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", APP.Controller.applyTheme);
+      }
     },
 
-    saveAndRender: function (message) {
-      APP.Core.save();
-      APP.Dom.setText("saveStatus", "Saved locally");
-      if (message) {
-        APP.Controller.addAlert("info", message);
+    route: function () {
+      var parts = (location.hash || "#/dashboard").replace(/^#\/?/, "").split("/");
+      var view = ROUTES[parts[0]] ? parts[0] : "dashboard";
+      APP.State.route = { view: view, id: parts[1] || "" };
+
+      if (view === "maintenance") {
+        APP.State.ui.taskFilter = parts[1] === "history" ? "history"
+          : APP.State.ui.taskFilter === "history" ? "upcoming" : APP.State.ui.taskFilter;
       }
       APP.Controller.render();
-    },
-
-    addAlert: function (type, message) {
-      APP.State.alerts = [{ type: type, message: message }];
-    },
-
-    renderAlerts: function () {
-      var html = APP.State.alerts.map(function (alert) {
-        return '<div class="alert alert-' + APP.Utils.escapeHTML(alert.type) + '">' +
-          APP.Utils.escapeHTML(alert.message) + "</div>";
-      }).join("");
-
-      APP.Dom.setHTML("alerts", html);
-      APP.State.alerts = [];
-    },
-
-    renderAudit: function () {
-      var log = APP.State.data.auditLog.map(function (entry) {
-        return '<div class="audit-entry">' +
-          '<time>' + APP.Utils.escapeHTML(new Date(entry.time).toLocaleString()) + "</time>" +
-          "<div>" + APP.Utils.escapeHTML(entry.message) + "</div>" +
-          "</div>";
-      }).join("");
-
-      APP.Dom.setHTML("auditLog", log || '<div class="muted">No audit entries.</div>');
     },
 
     render: function () {
-      var model = APP.Model.build(APP.State.data);
-      var analytics = APP.Analytics.build(model);
-      var view = APP.State.activeView;
+      var model = APP.Model.build(D());
+      var r = APP.State.route;
 
-      APP.Dom.setActiveNav(view);
-      APP.Controller.renderAlerts();
-      APP.Controller.renderAudit();
+      APP.Dom.setHTML("viewRoot", ROUTES[r.view](model, r));
+      APP.Dom.setActiveNav(NAV_FOR[r.view] || r.view);
+      document.body.classList.toggle("read-only", !APP.Core.canEdit());
 
-      var renderers = {
-        dashboard: APP.Controller.renderDashboard,
-        inventory: APP.Controller.renderInventory,
-        rooms: APP.Controller.renderRooms,
-        projects: APP.Controller.renderProjects,
-        maintenance: APP.Controller.renderMaintenance,
-        reports: APP.Controller.renderReports
-      };
+      var badge = model.overdueTasks.length;
+      APP.Dom.queryAll("[data-overdue-badge]").forEach(function (el) {
+        el.textContent = badge || "";
+        el.hidden = !badge;
+      });
 
-      renderers[view](model, analytics);
+      APP.Dom.queryAll("img[data-thumb]").forEach(function (img) {
+        APP.Files.thumbnail(img.getAttribute("data-thumb"), img);
+      });
     },
 
-    setView: function (view) {
-      APP.State.activeView = view;
+    commit: function (auditMessage, toast) {
+      if (auditMessage) {
+        APP.Core.addAudit("info", auditMessage);
+      }
+      APP.Core.save();
+      APP.Dom.closeSheet();
       APP.Controller.render();
-    },
-
-    renderDashboard: function (model, analytics) {
-      APP.Dom.setText("pageTitle", "Home Dashboard");
-
-      var findings = analytics.findings.map(function (finding) {
-        return '<div class="finding ' + finding.type + '">' +
-          "<strong>" + APP.Utils.escapeHTML(finding.title) + "</strong>" +
-          "<span>" + APP.Utils.escapeHTML(finding.detail) + "</span>" +
-          "</div>";
-      }).join("");
-
-      var taskList = analytics.dueTasks.map(function (task) {
-        var urgency = task.isOverdue ? "danger" : "warning";
-        var timing = task.isOverdue
-          ? Math.abs(task.daysUntil) + " day(s) overdue"
-          : "Due in " + task.daysUntil + " day(s)";
-
-        return '<div class="timeline-item ' + urgency + '">' +
-          "<strong>" + APP.Utils.escapeHTML(task.title) + "</strong>" +
-          "<span>" + APP.Utils.escapeHTML(timing) + " · " +
-          APP.Utils.escapeHTML(task.assetName) + "</span></div>";
-      }).join("") || '<div class="empty-state">No upcoming maintenance tasks.</div>';
-
-      var chartAvailable = window.Chart
-        ? '<canvas id="project-spend-chart"></canvas>'
-        : '<div class="chart-fallback">Chart.js is unavailable. Project budget totals remain available in the Projects tab.</div>';
-
-      APP.Dom.setHTML("viewRoot",
-        '<div class="grid metrics-grid">' +
-          APP.Controller.metricCard("Home Assets", analytics.metrics.assetCount, "Tracked appliances, systems, and equipment", "text-info") +
-          APP.Controller.metricCard("Open Tasks", analytics.metrics.openTaskCount, analytics.metrics.overdueTaskCount + " overdue", analytics.metrics.overdueTaskCount ? "text-danger" : "text-success") +
-          APP.Controller.metricCard("Project Spending", APP.Utils.currency(analytics.metrics.projectSpent), "of " + APP.Utils.currency(analytics.metrics.projectBudget) + " planned", "text-warning") +
-          APP.Controller.metricCard("Rooms Tracked", analytics.metrics.roomCount, "Paint colors, finishes, and notes", "text-info") +
-        "</div>" +
-        '<div class="grid dashboard-grid">' +
-          '<section class="card"><div class="panel-toolbar"><div><p class="eyebrow">PRIORITY ITEMS</p><h3>Home Findings</h3></div>' +
-          '<button class="btn btn-secondary btn-small" data-action="export-table" data-export="findings" data-format="csv">Export Findings</button></div>' +
-          '<div class="findings-list">' + findings + "</div></section>" +
-          '<section class="card"><p class="eyebrow">MAINTENANCE CALENDAR</p><h3>Upcoming Work</h3>' +
-          '<div class="timeline-list">' + taskList + "</div></section>" +
-        "</div>" +
-        '<section class="card" style="margin-top:16px">' +
-          '<div class="panel-toolbar"><div><p class="eyebrow">CAPITAL PLANNING</p><h3>Project Budget vs. Spending</h3></div>' +
-          '<span class="table-meta">USD</span></div><div class="chart-wrap">' + chartAvailable + "</div></section>"
-      );
-
-      if (window.Chart) {
-        APP.Charts.buildProjectSpend("project-spend-chart", analytics.projectSpend);
+      if (toast) {
+        APP.Dom.toast(toast);
       }
     },
 
-    metricCard: function (label, value, detail, className) {
-      return '<section class="card metric-card"><p class="metric-label">' +
-        APP.Utils.escapeHTML(label) + '</p><div class="metric-value">' +
-        APP.Utils.escapeHTML(value) + '</div><div class="metric-trend ' +
-        className + '">' + APP.Utils.escapeHTML(detail) + "</div></section>";
-    },
-
-    renderInventory: function (model) {
-      APP.Dom.setText("pageTitle", "Home Inventory");
-
-      var table = APP.Tables.render({
-        id: "inventory-table",
-        title: "Appliances, Systems & Equipment",
-        subtitle: "Track purchase dates, installation details, warranties, and service information.",
-        exportKey: "inventory",
-        records: model.assets,
-        columns: [
-          { key: "name", label: "Asset" },
-          { key: "category", label: "Category" },
-          { key: "roomName", label: "Room" },
-          { key: "brand", label: "Brand" },
-          { key: "warrantyEnd", label: "Warranty End", render: function (r) { return APP.Utils.date(r.warrantyEnd); } },
-          { key: "condition", label: "Condition", render: function (r) { return '<span class="badge ' + APP.Utils.statusBadge(r.condition) + '">' + APP.Utils.escapeHTML(r.condition) + "</span>"; } },
-          { key: "id", label: "Actions", render: function (r) { return '<button class="btn btn-secondary btn-small" data-action="delete-asset" data-id="' + r.id + '">Delete</button>'; } }
-        ]
-      });
-
-      APP.Dom.setHTML("viewRoot",
-        '<div class="grid two-col">' +
-          '<section class="card"><p class="eyebrow">ADD ASSET</p><h3>New Home Inventory Item</h3>' +
-          APP.Controller.assetForm(model) + "</section>" +
-          '<section class="card"><p class="eyebrow">SPREADSHEET IMPORT</p><h3>Import Inventory Workbook</h3>' +
-          '<p class="form-help">Accepted headers include Name, Category, Room, Brand, Model, Serial, Received Date, Install Date, Warranty End, Condition, and Notes.</p>' +
-          '<label class="btn btn-secondary file-label">Select .xlsx Inventory File<input type="file" data-action="import-xlsx" accept=".xlsx,.xls"></label>' +
-          '<p class="form-help">The importer detects report header rows, normalizes aliases, and records date parsing warnings in the audit log.</p>' +
-          "</section></div><section class=\"card\" style=\"margin-top:16px\">" + table + "</section>"
-      );
-    },
-
-    assetForm: function (model) {
-      var rooms = '<option value="">Whole Home / Unassigned</option>' +
-        model.rooms.map(function (room) {
-          return '<option value="' + room.id + '">' + APP.Utils.escapeHTML(room.name) + "</option>";
-        }).join("");
-
-      return '<form data-form="asset" class="form-grid three">' +
-        APP.Controller.field("Name", "name", "text", true) +
-        APP.Controller.field("Category", "category", "text", true) +
-        '<div class="field"><label>Room</label><select name="roomId">' + rooms + "</select></div>" +
-        APP.Controller.field("Brand", "brand", "text") +
-        APP.Controller.field("Model", "model", "text") +
-        APP.Controller.field("Serial Number", "serial", "text") +
-        APP.Controller.field("Received Date", "receivedDate", "date") +
-        APP.Controller.field("Install Date", "installDate", "date") +
-        APP.Controller.field("Warranty End", "warrantyEnd", "date") +
-        '<div class="field"><label>Condition</label><select name="condition"><option>Good</option><option>Fair</option><option>Needs Attention</option><option>Unknown</option></select></div>' +
-        APP.Controller.field("Notes", "notes", "textarea", false, "full") +
-        '<div class="form-actions"><button class="btn btn-primary" type="submit">Add Inventory Item</button></div></form>';
-    },
-
-    renderRooms: function (model) {
-      APP.Dom.setText("pageTitle", "Rooms & Finishes");
-
-      var cards = model.rooms.map(function (room) {
-        var assets = model.assets.filter(function (asset) {
-          return asset.roomName === room.name;
-        });
-
-        return '<section class="card room-card">' +
-          '<div class="split-heading"><div><h3>' + APP.Utils.escapeHTML(room.name) + '</h3><p class="table-meta">' +
-          APP.Utils.escapeHTML(room.floor || "Floor not recorded") + "</p></div>" +
-          '<button class="btn btn-secondary btn-small" data-action="delete-room" data-id="' + room.id + '">Delete</button></div>' +
-          '<div><span class="color-swatch" style="background:' + APP.Utils.escapeHTML(room.paintColor || "#777") + '"></span>' +
-          APP.Utils.escapeHTML(room.paintColor || "Paint not recorded") +
-          (room.paintCode ? " · " + APP.Utils.escapeHTML(room.paintCode) : "") + "</div>" +
-          '<div class="muted">' + APP.Utils.escapeHTML(room.notes || "No room notes.") + "</div>" +
-          '<div class="table-meta">Assets in room: ' + assets.length + "</div></section>";
-      }).join("") || '<div class="empty-state">Add rooms to track paint colors, finishes, and room-specific assets.</div>';
-
-      APP.Dom.setHTML("viewRoot",
-        '<div class="grid two-col"><section class="card"><p class="eyebrow">ADD ROOM</p><h3>Room & Finish Details</h3>' +
-        '<form data-form="room" class="form-grid">' +
-        APP.Controller.field("Room Name", "name", "text", true) +
-        APP.Controller.field("Floor / Area", "floor", "text") +
-        APP.Controller.field("Paint Color", "paintColor", "text") +
-        APP.Controller.field("Paint Code", "paintCode", "text") +
-        APP.Controller.field("Notes", "notes", "textarea", false, "full") +
-        '<div class="form-actions"><button class="btn btn-primary" type="submit">Add Room</button></div></form></section>' +
-        '<section class="card"><p class="eyebrow">ROOM PLANNING</p><h3>Suggested Uses</h3><div class="findings-list">' +
-        '<div class="finding"><strong>Paint tracking</strong><span>Record manufacturer, color name, sheen, and paint code in room notes.</span></div>' +
-        '<div class="finding"><strong>Appliance mapping</strong><span>Assign inventory assets to rooms for quicker service and replacement planning.</span></div>' +
-        "</div></section></div><div class=\"grid\" style=\"grid-template-columns:repeat(auto-fit,minmax(260px,1fr));margin-top:16px\">" + cards + "</div>"
-      );
-    },
-
-    renderProjects: function (model) {
-      APP.Dom.setText("pageTitle", "Projects & Budget");
-
-      var table = APP.Tables.render({
-        id: "projects-table",
-        title: "Current and Planned Projects",
-        subtitle: "Monitor scope, budget, current spending, and milestone dates.",
-        exportKey: "projects",
-        records: model.projects,
-        columns: [
-          { key: "name", label: "Project" },
-          { key: "status", label: "Status", render: function (r) { return '<span class="badge ' + APP.Utils.statusBadge(r.status) + '">' + APP.Utils.escapeHTML(r.status) + "</span>"; } },
-          { key: "budget", label: "Budget", render: function (r) { return APP.Utils.currency(r.budget); } },
-          { key: "spent", label: "Spent", render: function (r) { return APP.Utils.currency(r.spent); } },
-          { key: "remaining", label: "Remaining", render: function (r) { return '<span class="' + (r.remaining < 0 ? "text-danger" : "text-success") + '">' + APP.Utils.currency(r.remaining) + "</span>"; } },
-          { key: "endDate", label: "Target End", render: function (r) { return APP.Utils.date(r.endDate); } },
-          { key: "id", label: "Actions", render: function (r) { return '<button class="btn btn-secondary btn-small" data-action="delete-project" data-id="' + r.id + '">Delete</button>'; } }
-        ]
-      });
-
-      APP.Dom.setHTML("viewRoot",
-        '<div class="grid two-col"><section class="card"><p class="eyebrow">CREATE PROJECT</p><h3>Project Budget & Timeline</h3>' +
-        '<form data-form="project" class="form-grid">' +
-        APP.Controller.field("Project Name", "name", "text", true) +
-        '<div class="field"><label>Status</label><select name="status"><option>Planned</option><option>In Progress</option><option>On Hold</option><option>Complete</option></select></div>' +
-        APP.Controller.field("Budget", "budget", "number") +
-        APP.Controller.field("Current Spend", "spent", "number") +
-        APP.Controller.field("Start Date", "startDate", "date") +
-        APP.Controller.field("Target End Date", "endDate", "date") +
-        APP.Controller.field("Project Notes", "notes", "textarea", false, "full") +
-        '<div class="form-actions"><button class="btn btn-primary" type="submit">Add Project</button></div></form></section>' +
-        '<section class="card"><p class="eyebrow">BUDGET POSTURE</p><h3>Planning Guidance</h3><div class="findings-list">' +
-        '<div class="finding"><strong>Budget baseline</strong><span>Enter approved budget before recording project expenses.</span></div>' +
-        '<div class="finding"><strong>Timeline visibility</strong><span>Use target end dates to identify projects that need contractor or material follow-up.</span></div>' +
-        "</div></section></div><section class=\"card\" style=\"margin-top:16px\">" + table + "</section>"
-      );
-    },
-
-    renderMaintenance: function (model) {
-      APP.Dom.setText("pageTitle", "Maintenance & Reminders");
-
-      var table = APP.Tables.render({
-        id: "maintenance-table",
-        title: "Maintenance Schedule",
-        subtitle: "Use due dates and frequencies to manage recurring home care.",
-        exportKey: "maintenance",
-        records: model.tasks,
-        columns: [
-          { key: "title", label: "Task" },
-          { key: "dueDate", label: "Due Date", render: function (r) { return APP.Utils.date(r.dueDate); } },
-          { key: "priority", label: "Priority", render: function (r) { return '<span class="badge ' + APP.Utils.statusBadge(r.priority) + '">' + APP.Utils.escapeHTML(r.priority) + "</span>"; } },
-          { key: "status", label: "Status", render: function (r) { return '<span class="badge ' + APP.Utils.statusBadge(r.status) + '">' + APP.Utils.escapeHTML(r.status) + "</span>"; } },
-          { key: "assetName", label: "Related Asset" },
-          { key: "frequency", label: "Frequency" },
-          { key: "id", label: "Actions", render: function (r) { return '<button class="btn btn-secondary btn-small" data-action="complete-task" data-id="' + r.id + '">Complete</button> <button class="btn btn-ghost btn-small" data-action="delete-task" data-id="' + r.id + '">Delete</button>'; } }
-        ]
-      });
-
-      APP.Dom.setHTML("viewRoot",
-        '<div class="grid two-col"><section class="card"><p class="eyebrow">SCHEDULE MAINTENANCE</p><h3>New Reminder</h3>' +
-        APP.Controller.taskForm(model) + "</section>" +
-        '<section class="card"><p class="eyebrow">REMINDER NOTE</p><h3>Browser-Local Planning</h3>' +
-        '<p class="form-help">This no-backend version tracks reminders inside this browser. It does not send email, text, or push notifications. Export your maintenance schedule or create calendar reminders from your preferred device calendar.</p>' +
-        "</section></div><section class=\"card\" style=\"margin-top:16px\">" + table + "</section>"
-      );
-    },
-
-    taskForm: function (model) {
-      var assets = '<option value="">No linked asset</option>' +
-        model.assets.map(function (asset) {
-          return '<option value="' + asset.id + '">' + APP.Utils.escapeHTML(asset.name) + "</option>";
-        }).join("");
-
-      var rooms = '<option value="">Whole Home</option>' +
-        model.rooms.map(function (room) {
-          return '<option value="' + room.id + '">' + APP.Utils.escapeHTML(room.name) + "</option>";
-        }).join("");
-
-      return '<form data-form="task" class="form-grid">' +
-        APP.Controller.field("Task", "title", "text", true) +
-        APP.Controller.field("Due Date", "dueDate", "date", true) +
-        '<div class="field"><label>Priority</label><select name="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>' +
-        '<div class="field"><label>Status</label><select name="status"><option selected>Open</option><option>Complete</option></select></div>' +
-        APP.Controller.field("Frequency", "frequency", "text") +
-        '<div class="field"><label>Related Room</label><select name="roomId">' + rooms + "</select></div>" +
-        '<div class="field"><label>Related Asset</label><select name="assetId">' + assets + "</select></div>" +
-        APP.Controller.field("Notes", "notes", "textarea", false, "full") +
-        '<div class="form-actions"><button class="btn btn-primary" type="submit">Add Maintenance Task</button></div></form>';
-    },
-
-    renderReports: function (model, analytics) {
-      APP.Dom.setText("pageTitle", "Home Reports");
-
-      APP.Dom.setHTML("viewRoot",
-        '<section class="card report-sheet"><div class="report-header"><p class="eyebrow">HOMEOPS SUMMARY</p><h3>' +
-        APP.Utils.escapeHTML(model.home.name || "Home Report") + '</h3><p class="muted">' +
-        APP.Utils.escapeHTML(model.home.address || "Address not recorded") + "</p></div>" +
-        '<div class="grid metrics-grid" style="margin-top:18px">' +
-        APP.Controller.metricCard("Tracked Assets", analytics.metrics.assetCount, "Systems and appliances", "text-info") +
-        APP.Controller.metricCard("Open Tasks", analytics.metrics.openTaskCount, analytics.metrics.overdueTaskCount + " overdue", analytics.metrics.overdueTaskCount ? "text-danger" : "text-success") +
-        APP.Controller.metricCard("Project Budget", APP.Utils.currency(analytics.metrics.projectBudget), "Current planned budget", "text-warning") +
-        APP.Controller.metricCard("Project Spend", APP.Utils.currency(analytics.metrics.projectSpent), analytics.metrics.budgetPercent + "% of budget", "text-info") +
-        "</div>" +
-        '<div class="grid two-col" style="margin-top:18px"><div><p class="eyebrow">TOP FINDINGS</p><div class="findings-list">' +
-        analytics.findings.map(function (finding) {
-          return '<div class="finding ' + finding.type + '"><strong>' + APP.Utils.escapeHTML(finding.title) +
-            "</strong><span>" + APP.Utils.escapeHTML(finding.detail) + "</span></div>";
-        }).join("") +
-        '</div></div><div><p class="eyebrow">REPORT ACTIONS</p><div class="inline-actions">' +
-        '<button class="btn btn-primary" data-action="print-report">Print / Save PDF</button>' +
-        '<button class="btn btn-secondary" data-action="export-table" data-export="findings" data-format="csv">Export Findings CSV</button>' +
-        '<button class="btn btn-secondary" data-action="export-backup">Export Full Backup</button>' +
-        "</div></div></div></section>"
-      );
-    },
-
-    field: function (label, name, type, required, extraClass) {
-      if (type === "textarea") {
-        return '<div class="field ' + (extraClass || "") + '"><label>' + label +
-          '</label><textarea name="' + name + '"></textarea></div>';
+    applyTheme: function () {
+      var theme = APP.State.data ? APP.State.data.settings.theme : "system";
+      if (theme === "light" || theme === "dark") {
+        document.documentElement.setAttribute("data-theme", theme);
+      } else {
+        document.documentElement.removeAttribute("data-theme");
       }
-
-      return '<div class="field ' + (extraClass || "") + '"><label>' + label +
-        '</label><input type="' + type + '" name="' + name + '"' +
-        (required ? " required" : "") + "></div>";
     },
+
+    guard: function () {
+      if (APP.Core.canEdit()) {
+        return true;
+      }
+      APP.Dom.toast("You're in view-only mode. Switch users in Settings › Users to make changes.", "warning");
+      return false;
+    },
+
+    // ---------- clicks ----------
 
     handleClick: function (event) {
-      var nav = APP.Dom.closest(event, "[data-view]");
-      var actionButton = APP.Dom.closest(event, "[data-action]");
+      var el = APP.Dom.closest(event, "[data-action]");
 
-      if (nav) {
-        APP.Controller.setView(nav.getAttribute("data-view"));
+      if (!APP.Dom.closest(event, ".menu-wrap")) {
+        APP.Dom.queryAll(".menu").forEach(function (m) { m.hidden = true; });
+      }
+
+      if (!el || el.tagName === "SELECT" || el.tagName === "INPUT") {
         return;
       }
 
-      if (!actionButton) {
-        return;
-      }
+      var action = el.getAttribute("data-action");
+      var id = el.getAttribute("data-id") || "";
+      var handler = APP.Controller.actions[action];
 
-      var action = actionButton.getAttribute("data-action");
-      var id = actionButton.getAttribute("data-id");
-
-      if (action === "quick-add-task") {
-        APP.State.activeView = "maintenance";
-        APP.Controller.render();
-        return;
-      }
-
-      if (action === "export-backup") {
-        APP.Exports.backup(APP.State.data);
-        APP.Core.addAudit("info", "Full JSON backup exported.");
-        APP.Controller.saveAndRender("Backup downloaded.");
-        return;
-      }
-
-      if (action === "reset-data") {
-        APP.State.data = APP.Core.defaultData();
-        APP.Core.addAudit("warning", "Data reset to example records.");
-        APP.Controller.saveAndRender("Example data restored.");
-        return;
-      }
-
-      if (action === "clear-audit-log") {
-        APP.State.data.auditLog = [];
-        APP.Core.addAudit("info", "Audit log cleared.");
-        APP.Controller.saveAndRender();
-        return;
-      }
-
-      if (action === "print-report") {
-        APP.Dom.print();
-        return;
-      }
-
-      if (action === "export-table") {
-        var model = APP.Model.build(APP.State.data);
-        var analytics = APP.Analytics.build(model);
-        var key = actionButton.getAttribute("data-export");
-        var format = actionButton.getAttribute("data-format");
-        var result = APP.Exports.exportRows(key, APP.Exports.tableData(key, model, analytics), format);
-
-        APP.Core.addAudit("info", key + " table exported.");
-        APP.Controller.saveAndRender(result.message);
-        return;
-      }
-
-      if (action === "delete-asset") {
-        APP.State.data.inventory = APP.State.data.inventory.filter(function (item) { return item.id !== id; });
-        APP.Core.addAudit("info", "Inventory item deleted.");
-        APP.Controller.saveAndRender("Inventory item deleted.");
-        return;
-      }
-
-      if (action === "delete-room") {
-        APP.State.data.rooms = APP.State.data.rooms.filter(function (item) { return item.id !== id; });
-        APP.State.data.inventory.forEach(function (asset) {
-          if (asset.roomId === id) { asset.roomId = ""; }
-        });
-        APP.Core.addAudit("info", "Room deleted. Associated assets were left unassigned.");
-        APP.Controller.saveAndRender("Room deleted.");
-        return;
-      }
-
-      if (action === "delete-project") {
-        APP.State.data.projects = APP.State.data.projects.filter(function (item) { return item.id !== id; });
-        APP.Core.addAudit("info", "Project deleted.");
-        APP.Controller.saveAndRender("Project deleted.");
-        return;
-      }
-
-      if (action === "delete-task") {
-        APP.State.data.tasks = APP.State.data.tasks.filter(function (item) { return item.id !== id; });
-        APP.Core.addAudit("info", "Maintenance task deleted.");
-        APP.Controller.saveAndRender("Maintenance task deleted.");
-        return;
-      }
-
-      if (action === "complete-task") {
-        APP.State.data.tasks.forEach(function (task) {
-          if (task.id === id) {
-            task.status = "Complete";
-          }
-        });
-        APP.Core.addAudit("info", "Maintenance task marked complete.");
-        APP.Controller.saveAndRender("Task marked complete.");
-        return;
-      }
-
-      if (action === "table-page") {
-        var tableId = actionButton.getAttribute("data-table-id");
-        var direction = actionButton.getAttribute("data-direction");
-        APP.State.ui.tables[tableId] = APP.State.ui.tables[tableId] || { page: 1, filter: "", sortKey: "", sortDirection: "asc" };
-        APP.State.ui.tables[tableId].page += direction === "next" ? 1 : -1;
-        APP.State.ui.tables[tableId].page = Math.max(1, APP.State.ui.tables[tableId].page);
-        APP.Controller.render();
-        return;
-      }
-
-      if (actionButton.hasAttribute("data-sort-key")) {
-        var sortTable = actionButton.getAttribute("data-table-id");
-        var sortKey = actionButton.getAttribute("data-sort-key");
-        APP.State.ui.tables[sortTable] = APP.State.ui.tables[sortTable] || { page: 1, filter: "", sortKey: "", sortDirection: "asc" };
-
-        if (APP.State.ui.tables[sortTable].sortKey === sortKey) {
-          APP.State.ui.tables[sortTable].sortDirection =
-            APP.State.ui.tables[sortTable].sortDirection === "asc" ? "desc" : "asc";
-        } else {
-          APP.State.ui.tables[sortTable].sortKey = sortKey;
-          APP.State.ui.tables[sortTable].sortDirection = "asc";
-        }
-
-        APP.Controller.render();
+      if (handler) {
+        event.preventDefault();
+        handler(id, el);
       }
     },
 
-    handleInput: function (event) {
-      var filter = APP.Dom.closest(event, "[data-table-filter]");
+    actions: {
+      "close-sheet": function () { APP.Dom.closeSheet(); },
 
-      if (!filter) {
-        return;
+      "toggle-menu": function (id, el) {
+        var menu = el.parentNode.querySelector(".menu");
+        menu.hidden = !menu.hidden;
+      },
+
+      "task-filter": function (id) {
+        APP.State.ui.taskFilter = id;
+        if (location.hash !== "#/maintenance") {
+          location.hash = "#/maintenance";
+        } else {
+          APP.Controller.render();
+        }
+      },
+
+      "project-filter": function (id) {
+        APP.State.ui.projectFilter = id;
+        APP.Controller.render();
+      },
+
+      // add
+      "add-location": function () { if (APP.Controller.guard()) { APP.Forms.open("location", null); } },
+      "add-item": function (id, el) {
+        if (!APP.Controller.guard()) { return; }
+        var loc = el.getAttribute("data-location") || (APP.State.route.view === "locations" ? APP.State.route.id : "");
+        APP.Forms.open("item", { category: "appliance", locationId: loc });
+      },
+      "add-paint": function (id, el) {
+        if (!APP.Controller.guard()) { return; }
+        APP.Forms.open("paint", { locationId: el.getAttribute("data-location") || "", finish: "Flat/Matte", surface: "Walls" });
+      },
+      "add-task": function (id, el) {
+        if (!APP.Controller.guard()) { return; }
+        APP.Forms.open("task", {
+          itemId: el.getAttribute("data-item") || "", locationId: el.getAttribute("data-location") || "",
+          scheduleType: "recurring", intervalCount: 1, intervalUnit: "year", nextDue: U.todayISO()
+        });
+      },
+      "add-project": function (id, el) {
+        if (!APP.Controller.guard()) { return; }
+        APP.Forms.open("project", { status: "Not Started", locationId: el.getAttribute("data-location") || "" });
+      },
+      "add-expense": function () {
+        if (!APP.Controller.guard()) { return; }
+        APP.Forms.open("expense", { date: U.todayISO() }, { projectId: APP.State.route.id });
+      },
+      "add-supply": function () {
+        if (!APP.Controller.guard()) { return; }
+        APP.Forms.open("supply", { qty: 1 }, { projectId: APP.State.route.id });
+      },
+      "add-user": function () { if (APP.Controller.guard()) { APP.Forms.open("user", { role: "Editor" }); } },
+
+      // edit
+      "edit-home": function () { if (APP.Controller.guard()) { APP.Forms.open("home", Object.assign({ id: "home" }, D().home)); } },
+      "edit-location": function (id) { if (APP.Controller.guard()) { APP.Forms.open("location", APP.Core.find("locations", id), { deleteAction: "delete-location" }); } },
+      "edit-item": function (id) { if (APP.Controller.guard()) { APP.Forms.open("item", APP.Core.find("items", id), { deleteAction: "delete-item" }); } },
+      "edit-paint": function (id) { if (APP.Controller.guard()) { APP.Forms.open("paint", APP.Core.find("paints", id), { deleteAction: "delete-paint" }); } },
+      "open-task": function (id) {
+        if (!APP.Core.canEdit()) { return; }
+        APP.Forms.open("task", APP.Core.find("tasks", id), { deleteAction: "delete-task" });
+      },
+      "edit-project": function (id) { if (APP.Controller.guard()) { APP.Forms.open("project", APP.Core.find("projects", id), { deleteAction: "delete-project" }); } },
+      "edit-expense": function (id) {
+        if (!APP.Controller.guard()) { return; }
+        var p = APP.Core.find("projects", APP.State.route.id);
+        APP.Forms.open("expense", p.expenses.filter(function (e) { return e.id === id; })[0], { projectId: p.id, deleteAction: "delete-expense", parentId: p.id });
+      },
+      "edit-supply": function (id) {
+        if (!APP.Controller.guard()) { return; }
+        var p = APP.Core.find("projects", APP.State.route.id);
+        APP.Forms.open("supply", p.supplies.filter(function (s) { return s.id === id; })[0], { projectId: p.id, deleteAction: "delete-supply", parentId: p.id });
+      },
+      "edit-user": function (id) { if (APP.Controller.guard()) { APP.Forms.open("user", APP.Core.find("users", id), { deleteAction: "delete-user" }); } },
+
+      // tasks & supplies
+      "complete-task": function (id) {
+        if (!APP.Controller.guard()) { return; }
+        var me = APP.Core.currentUser();
+        APP.Forms.open("complete", { date: U.todayISO(), by: me ? me.name : "" }, { taskId: id });
+      },
+      "toggle-supply": function (id) {
+        if (!APP.Controller.guard()) { return; }
+        var p = APP.Core.find("projects", APP.State.route.id);
+        p.supplies.forEach(function (s) { if (s.id === id) { s.purchased = !s.purchased; } });
+        APP.Controller.commit();
+      },
+
+      // delete
+      "delete-location": function (id) {
+        var loc = APP.Core.find("locations", id);
+        if (!confirm("Delete “" + loc.name + "”? Items, paints, and tasks in it will be kept but unassigned.")) { return; }
+        ["items", "paints", "tasks", "projects"].forEach(function (k) {
+          D()[k].forEach(function (row) { if (row.locationId === id) { row.locationId = ""; } });
+        });
+        APP.Core.remove("locations", id);
+        location.hash = "#/locations";
+        APP.Controller.commit("Location deleted: " + loc.name, "Location deleted");
+      },
+      "delete-item": function (id) {
+        var item = APP.Core.find("items", id);
+        var tasks = D().tasks.filter(function (t) { return t.itemId === id; });
+        if (!confirm("Delete “" + item.name + "”" + (tasks.length ? " and its " + tasks.length + " maintenance task(s)" : "") + "? This can't be undone.")) { return; }
+        D().tasks = D().tasks.filter(function (t) { return t.itemId !== id; });
+        APP.Core.remove("items", id);
+        APP.Files.removeFor("item", id);
+        location.hash = "#/inventory";
+        APP.Controller.commit("Item deleted: " + item.name, "Item deleted");
+      },
+      "delete-paint": function (id) {
+        if (!confirm("Delete this paint color?")) { return; }
+        APP.Core.remove("paints", id);
+        APP.Controller.commit("Paint color deleted.", "Paint deleted");
+      },
+      "delete-task": function (id) {
+        var t = APP.Core.find("tasks", id);
+        if (!confirm("Delete “" + t.name + "” and its history?")) { return; }
+        APP.Core.remove("tasks", id);
+        APP.Controller.commit("Task deleted: " + t.name, "Task deleted");
+      },
+      "delete-project": function (id) {
+        var p = APP.Core.find("projects", id);
+        if (!confirm("Delete “" + p.name + "” with its expenses, supplies, and attachments?")) { return; }
+        APP.Core.remove("projects", id);
+        APP.Files.removeFor("project", id);
+        location.hash = "#/projects";
+        APP.Controller.commit("Project deleted: " + p.name, "Project deleted");
+      },
+      "delete-expense": function (id, el) {
+        var p = APP.Core.find("projects", el.getAttribute("data-parent"));
+        p.expenses = p.expenses.filter(function (e) { return e.id !== id; });
+        APP.Controller.commit("Expense removed from " + p.name, "Expense deleted");
+      },
+      "delete-supply": function (id, el) {
+        var p = APP.Core.find("projects", el.getAttribute("data-parent"));
+        p.supplies = p.supplies.filter(function (s) { return s.id !== id; });
+        APP.Controller.commit("Supply removed from " + p.name, "Supply deleted");
+      },
+      "delete-user": function (id) {
+        var u = APP.Core.find("users", id);
+        var owners = D().users.filter(function (x) { return x.role === "Owner"; });
+        if (u.role === "Owner" && owners.length === 1) {
+          APP.Dom.toast("A home needs at least one Owner.", "warning");
+          return;
+        }
+        if (!confirm("Remove " + u.name + " from this home?")) { return; }
+        APP.Core.remove("users", id);
+        D().tasks.forEach(function (t) { if (t.assigneeId === id) { t.assigneeId = ""; } });
+        if (D().currentUserId === id) { D().currentUserId = D().users[0].id; }
+        APP.Controller.commit("User removed: " + u.name, "User removed");
+      },
+
+      // files
+      "open-file": function (id) {
+        APP.Files.open(id).catch(function (err) { APP.Dom.toast(err.message, "danger"); });
+      },
+      "delete-file": function (id) {
+        if (!APP.Controller.guard()) { return; }
+        var meta = APP.Core.find("attachments", id);
+        if (!confirm("Delete " + (meta ? meta.name : "this file") + "?")) { return; }
+        APP.Files.remove(id).then(function () { APP.Controller.commit("Attachment deleted.", "File deleted"); });
+      },
+
+      // reports, reminders, data
+      "open-report": function () {
+        APP.Forms.open("report", { type: "full", includeTasks: true, includeWarranties: true, includeHistory: true, includePaints: true, includeExpenses: true });
+      },
+      "enable-notifications": function () {
+        APP.Reminders.requestPermission().then(function (perm) {
+          APP.Controller.render();
+          if (perm === "granted") {
+            APP.Reminders.check(true);
+            APP.Dom.toast("Reminders on for " + U.time12(D().settings.notifyTime));
+          } else {
+            APP.Dom.toast(perm === "unsupported" ? "This browser doesn't support notifications." : "Notifications were blocked. You can allow them from the browser's site settings.", "warning");
+          }
+        });
+      },
+      "test-notification": function () {
+        APP.Reminders.check(true);
+        APP.Dom.toast("Test notification sent");
+      },
+      "export-calendar": function () {
+        var model = APP.Model.build(D());
+        APP.Dom.download(U.slugify(model.home.name) + "-maintenance.ics", APP.Reminders.buildICS(model), "text/calendar;charset=utf-8");
+        APP.Dom.toast("Calendar file downloaded. Open it to add reminders to your calendar.");
+      },
+      "export-backup": function () {
+        APP.Exports.backup(D());
+        APP.Controller.commit("Full backup downloaded.", "Backup downloaded");
+      },
+      "export-share": function () {
+        var copy = JSON.parse(JSON.stringify(D()));
+        copy.attachments = [];
+        copy.auditLog = [];
+        copy.shareFile = true;
+        APP.Dom.download(U.slugify(copy.home.name) + "-household-" + U.todayISO() + ".json", JSON.stringify(copy, null, 2), "application/json");
+        APP.Dom.toast("Household file downloaded");
+      },
+      "export-table": function (id, el) {
+        var result = APP.Exports.exportRows(id, APP.Exports.tableData(id, APP.Model.build(D())), el.getAttribute("data-format"));
+        APP.Dom.toast(result.message, result.success ? "" : "warning");
+      },
+      "reset-demo": function () {
+        if (!confirm("Replace everything with example data?")) { return; }
+        APP.State.data = APP.Core.defaultData();
+        location.hash = "#/dashboard";
+        APP.Controller.commit("", "Example data loaded");
+      },
+      "clear-all": function () {
+        if (!confirm("Erase ALL data in this browser? Download a backup first if you might need it.")) { return; }
+        var ids = D().attachments.map(function (a) { return a.id; });
+        ids.forEach(function (fid) { APP.Files.remove(fid); });
+        APP.State.data = APP.Core.emptyData();
+        APP.Core.addAudit("info", "All data erased.");
+        location.hash = "#/settings";
+        APP.Controller.commit("", "All data erased");
+      },
+      "clear-log": function () {
+        D().auditLog = [];
+        APP.Controller.commit();
       }
+    },
 
-      var tableId = filter.getAttribute("data-table-filter");
-      APP.State.ui.tables[tableId] = APP.State.ui.tables[tableId] || { page: 1, filter: "", sortKey: "", sortDirection: "asc" };
-      APP.State.ui.tables[tableId].filter = filter.value;
-      APP.State.ui.tables[tableId].page = 1;
-      APP.Controller.render();
+    // ---------- inputs ----------
+
+    handleInput: function (event) {
+      var search = APP.Dom.closest(event, "[data-search]");
+      if (search) {
+        var pos = search.selectionStart;
+        APP.State.ui.search = search.value;
+        APP.Controller.render();
+        var next = document.querySelector("[data-search]");
+        if (next) {
+          next.focus();
+          next.setSelectionRange(pos, pos);
+        }
+      }
     },
 
     handleChange: function (event) {
-      var importInput = APP.Dom.closest(event, '[data-action="import-xlsx"]');
-      var backupInput = event.target && event.target.id === "backup-import" ? event.target : null;
+      var t = event.target;
+      var s = D().settings;
 
-      if (importInput) {
-        APP.Controller.importXlsx(APP.Dom.getFiles(event)[0]);
+      if (t.form && t.form.hasAttribute("data-form")) {
+        APP.Forms.applyVisibility(t.form);
+        return;
       }
 
-      if (backupInput) {
-        APP.Controller.importBackup(APP.Dom.getFiles(event)[0]);
+      if (t.hasAttribute("data-setting")) {
+        if (!APP.Controller.guard()) { APP.Controller.render(); return; }
+        var key = t.getAttribute("data-setting");
+        s[key] = t.type === "checkbox" ? t.checked : t.type === "number" ? Math.max(0, Number(t.value) || 0) : t.value;
+        if (key === "notifyTime") {
+          s.lastNotified = "";
+        }
+        APP.Controller.commit("", "Saved");
+        return;
+      }
+
+      var action = t.getAttribute("data-action");
+
+      if (action === "set-theme") {
+        s.theme = t.value;
+        APP.Controller.applyTheme();
+        APP.Controller.commit();
+      } else if (action === "switch-user") {
+        D().currentUserId = t.value;
+        APP.Controller.commit("", "Now acting as " + APP.Core.currentUser().name);
+      } else if (action === "project-status") {
+        var p = APP.Core.find("projects", t.getAttribute("data-id"));
+        p.status = t.value;
+        APP.Controller.commit("Project " + p.name + " set to " + p.status, "Status updated");
+      } else if (t.hasAttribute("data-attach-type")) {
+        APP.Controller.attach(t.getAttribute("data-attach-type"), t.getAttribute("data-attach-id"), t.files);
+      } else if (action === "import-xlsx") {
+        APP.Controller.importXlsx(t.files[0]);
+      } else if (action === "import-merge") {
+        APP.Controller.readJSON(t.files[0], function (parsed) {
+          var added = APP.Exports.merge(APP.Core.normalize(parsed));
+          APP.Controller.commit("Household file merged (" + added + " new records).", added + " new record(s) merged");
+        });
+      } else if (t.id === "backup-import") {
+        APP.Controller.readJSON(t.files[0], function (parsed) {
+          if (!confirm("Replace all data in this browser with this backup?")) { return; }
+          APP.State.data = parsed.rooms && !parsed.locations ? APP.Core.normalize(APP.Core.migrateV1(parsed)) : APP.Core.normalize(parsed);
+          APP.Controller.applyTheme();
+          APP.Controller.commit("Backup restored.", "Backup restored");
+        });
       }
     },
+
+    attach: function (type, id, files) {
+      if (!files || !files.length || !APP.Controller.guard()) {
+        return;
+      }
+      APP.Dom.toast("Saving " + files.length + " file(s)…");
+      APP.Files.add(type, id, files).then(function (n) {
+        APP.Controller.commit(n + " attachment(s) added.", n + " file(s) attached");
+      }).catch(function (err) {
+        APP.Dom.toast(err.message || "Files could not be saved.", "danger");
+      });
+    },
+
+    readJSON: function (file, onData) {
+      if (!file) {
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        var parsed;
+        try {
+          parsed = JSON.parse(e.target.result);
+        } catch (err) {
+          APP.Dom.toast("That file isn't a valid HomeOps JSON file.", "danger");
+          return;
+        }
+        if (!parsed || !parsed.home || !(Array.isArray(parsed.items) || Array.isArray(parsed.inventory))) {
+          APP.Dom.toast("That file doesn't look like a HomeOps backup.", "danger");
+          return;
+        }
+        onData(parsed);
+      };
+      reader.onerror = function () { APP.Dom.toast("File could not be read.", "danger"); };
+      reader.readAsText(file);
+    },
+
+    // ---------- forms ----------
 
     handleSubmit: function (event) {
       var form = APP.Dom.closest(event, "form[data-form]");
-
       if (!form) {
         return;
       }
-
       event.preventDefault();
 
-      var data = APP.Dom.getFormData(form);
       var type = form.getAttribute("data-form");
+      var sheet = APP.State.ui.sheet || { context: {} };
 
-      if (type === "asset") {
-        APP.State.data.inventory.push({
-          id: APP.Core.createId("asset"),
-          name: data.get("name"),
-          category: data.get("category"),
-          roomId: data.get("roomId"),
-          brand: data.get("brand"),
-          model: data.get("model"),
-          serial: data.get("serial"),
-          receivedDate: data.get("receivedDate"),
-          installDate: data.get("installDate"),
-          warrantyEnd: data.get("warrantyEnd"),
-          condition: data.get("condition"),
-          notes: data.get("notes")
-        });
-        APP.Core.addAudit("info", "Inventory item added: " + data.get("name"));
-        APP.Controller.saveAndRender("Inventory item added.");
+      if (type !== "report" && !APP.Controller.guard()) {
+        return;
       }
 
-      if (type === "room") {
-        APP.State.data.rooms.push({
-          id: APP.Core.createId("room"),
-          name: data.get("name"),
-          floor: data.get("floor"),
-          paintColor: data.get("paintColor"),
-          paintCode: data.get("paintCode"),
-          notes: data.get("notes")
-        });
-        APP.Core.addAudit("info", "Room added: " + data.get("name"));
-        APP.Controller.saveAndRender("Room added.");
+      var missing = APP.Forms.validate(type, form);
+      if (missing.length) {
+        APP.Dom.toast("Please fill in: " + missing.join(", "), "warning");
+        return;
       }
 
-      if (type === "project") {
-        APP.State.data.projects.push({
-          id: APP.Core.createId("project"),
-          name: data.get("name"),
-          status: data.get("status"),
-          budget: APP.Utils.safeNumber(data.get("budget")),
-          spent: APP.Utils.safeNumber(data.get("spent")),
-          startDate: data.get("startDate"),
-          endDate: data.get("endDate"),
-          notes: data.get("notes")
-        });
-        APP.Core.addAudit("info", "Project added: " + data.get("name"));
-        APP.Controller.saveAndRender("Project added.");
-      }
+      var v = APP.Forms.read(type, form);
+      var save = APP.Controller.savers[type];
+      save(v, sheet.id, sheet.context);
+    },
 
-      if (type === "task") {
-        APP.State.data.tasks.push({
-          id: APP.Core.createId("task"),
-          title: data.get("title"),
-          dueDate: data.get("dueDate"),
-          frequency: data.get("frequency"),
-          status: data.get("status"),
-          priority: data.get("priority"),
-          roomId: data.get("roomId"),
-          assetId: data.get("assetId"),
-          notes: data.get("notes")
-        });
-        APP.Core.addAudit("info", "Maintenance task added: " + data.get("title"));
-        APP.Controller.saveAndRender("Maintenance task added.");
+    upsert: function (collection, id, values, prefix) {
+      var row = id ? APP.Core.find(collection, id) : null;
+      if (row) {
+        Object.assign(row, values);
+        return { row: row, created: false };
       }
+      row = Object.assign({ id: APP.Core.createId(prefix) }, values);
+      D()[collection].push(row);
+      return { row: row, created: true };
+    },
+
+    savers: {
+      home: function (v) {
+        Object.assign(D().home, v);
+        APP.Controller.commit("Home details updated.", "Saved");
+      },
+      location: function (v, id) {
+        var r = APP.Controller.upsert("locations", id, v, "loc");
+        APP.Controller.commit((r.created ? "Location added: " : "Location updated: ") + v.name, r.created ? "Location added" : "Saved");
+      },
+      item: function (v, id) {
+        var r = APP.Controller.upsert("items", id, v, "item");
+        if (r.created) {
+          location.hash = "#/inventory/" + r.row.id;
+        }
+        APP.Controller.commit((r.created ? "Item added: " : "Item updated: ") + v.name, r.created ? "Item added" : "Saved");
+      },
+      paint: function (v, id) {
+        var r = APP.Controller.upsert("paints", id, v, "paint");
+        APP.Controller.commit((r.created ? "Paint added: " : "Paint updated: ") + v.name, r.created ? "Paint added" : "Saved");
+      },
+      task: function (v, id) {
+        if (v.itemId) {
+          v.locationId = "";
+        }
+        v.intervalCount = Math.max(1, Number(v.intervalCount) || 1);
+        if (!id) {
+          v.history = [];
+        }
+        var r = APP.Controller.upsert("tasks", id, v, "task");
+        if (r.row.scheduleType === "recurring") {
+          r.row.completedDate = "";
+        }
+        APP.Controller.commit((r.created ? "Task added: " : "Task updated: ") + v.name, r.created ? "Task scheduled for " + U.date(v.nextDue) : "Saved");
+      },
+      complete: function (v, id, ctx) {
+        var task = APP.Core.find("tasks", ctx.taskId);
+        task.history.push({ date: v.date, cost: v.cost, note: v.note, by: v.by });
+        task.history.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+        var msg;
+        if (task.scheduleType === "recurring") {
+          task.nextDue = U.addInterval(v.date, task.intervalCount, task.intervalUnit);
+          msg = task.name + " done · next due " + U.date(task.nextDue);
+        } else {
+          task.completedDate = v.date;
+          msg = task.name + " completed";
+        }
+        APP.Controller.commit("Completed: " + task.name, msg);
+      },
+      project: function (v, id) {
+        if (!id) {
+          v.expenses = [];
+          v.supplies = [];
+        }
+        var r = APP.Controller.upsert("projects", id, v, "project");
+        if (r.created) {
+          location.hash = "#/projects/" + r.row.id;
+        }
+        APP.Controller.commit((r.created ? "Project added: " : "Project updated: ") + v.name, r.created ? "Project added" : "Saved");
+      },
+      expense: function (v, id, ctx) {
+        APP.Controller.child(ctx.projectId, "expenses", id, v, "exp", "Expense");
+      },
+      supply: function (v, id, ctx) {
+        APP.Controller.child(ctx.projectId, "supplies", id, v, "sup", "Supply");
+      },
+      user: function (v, id) {
+        if (id) {
+          var existing = APP.Core.find("users", id);
+          var owners = D().users.filter(function (u) { return u.role === "Owner"; });
+          if (existing.role === "Owner" && v.role !== "Owner" && owners.length === 1) {
+            APP.Dom.toast("A home needs at least one Owner.", "warning");
+            return;
+          }
+        }
+        var r = APP.Controller.upsert("users", id, v, "user");
+        APP.Controller.commit((r.created ? "User added: " : "User updated: ") + v.name, r.created ? v.name + " added" : "Saved");
+      },
+      report: function (v) {
+        APP.Dom.closeSheet();
+        APP.Reports.print(APP.Model.build(D()), v);
+      }
+    },
+
+    child: function (projectId, key, id, values, prefix, label) {
+      var p = APP.Core.find("projects", projectId);
+      var row = id ? p[key].filter(function (x) { return x.id === id; })[0] : null;
+      if (row) {
+        Object.assign(row, values);
+      } else {
+        p[key].push(Object.assign({ id: APP.Core.createId(prefix) }, values));
+      }
+      APP.Controller.commit(label + (row ? " updated" : " added") + " on " + p.name, label + (row ? " saved" : " added"));
     },
 
     importXlsx: function (file) {
-      if (!file) {
+      if (!file || !APP.Controller.guard()) {
         return;
       }
+      APP.Dom.toast("Importing spreadsheet…");
 
-      APP.Dom.setText("saveStatus", "Importing spreadsheet...");
+      APP.IngestXlsx.readFile(file).then(function (result) {
+        var cleaned = APP.Clean.cleanInventoryImport(result);
+        var locByName = {};
+        D().locations.forEach(function (l) { locByName[l.name.toLowerCase()] = l.id; });
 
-      APP.IngestXlsx.readFile(file)
-        .then(function (result) {
-          var cleaned = APP.Clean.cleanInventoryImport(result);
-          var roomNames = {};
-
-          APP.State.data.rooms.forEach(function (room) {
-            roomNames[String(room.name).toLowerCase()] = room.id;
-          });
-
-          cleaned.rows.forEach(function (row) {
-            var roomId = roomNames[String(row.room).toLowerCase()] || "";
-
-            APP.State.data.inventory.push({
-              id: APP.Core.createId("asset"),
-              name: row.name,
-              category: row.category,
-              roomId: roomId,
-              brand: row.brand,
-              model: row.model,
-              serial: row.serial,
-              receivedDate: row.receivedDate,
-              installDate: row.installDate,
-              warrantyEnd: row.warrantyEnd,
-              condition: row.condition,
-              notes: row.notes
-            });
-          });
-
-          APP.Core.addAudit("info", "Spreadsheet import completed: " + cleaned.rows.length + " asset row(s) added.");
-          APP.Core.addAudit("info", "Header row detected at spreadsheet row " + (result.headerRow + 1) + ".");
-
-          cleaned.warnings.slice(0, 15).forEach(function (warning) {
-            APP.Core.addAudit("warning", warning);
-          });
-
-          if (cleaned.skipped) {
-            APP.Core.addAudit("warning", cleaned.skipped + " blank or invalid row(s) skipped during import.");
+        cleaned.rows.forEach(function (row) {
+          var locId = "";
+          if (row.room) {
+            locId = locByName[row.room.toLowerCase()];
+            if (!locId) {
+              locId = APP.Core.createId("loc");
+              D().locations.push({ id: locId, name: row.room, notes: "" });
+              locByName[row.room.toLowerCase()] = locId;
+            }
           }
-
-          APP.Controller.saveAndRender(cleaned.rows.length + " inventory item(s) imported.");
-        })
-        .catch(function (error) {
-          APP.Core.addAudit("warning", error.message);
-          APP.Controller.addAlert("danger", error.message + " What to do next: verify the file type and column names, then try again.");
-          APP.Controller.render();
+          D().items.push({
+            id: APP.Core.createId("item"), name: row.name, category: APP.Icons.guessCategory(row.category + " " + row.name),
+            locationId: locId, brand: row.brand, model: row.model, serial: row.serial,
+            purchaseDate: row.receivedDate || row.installDate, purchasePrice: "", store: "",
+            warrantyEnd: row.warrantyEnd, warrantyProvider: "", notes: row.notes
+          });
         });
-    },
 
-    importBackup: function (file) {
-      if (!file) {
-        return;
-      }
-
-      var reader = new FileReader();
-
-      reader.onerror = function () {
-        APP.Controller.addAlert("danger", "Backup file could not be read. What to do next: select a valid HomeOps JSON backup.");
-        APP.Controller.render();
-      };
-
-      reader.onload = function (event) {
-        try {
-          var parsed = JSON.parse(event.target.result);
-
-          if (!parsed.home || !Array.isArray(parsed.inventory) || !Array.isArray(parsed.tasks)) {
-            throw new Error("Backup does not contain the expected HomeOps data structure.");
-          }
-
-          APP.State.data = parsed;
-          APP.Core.addAudit("info", "Backup imported successfully.");
-          APP.Controller.saveAndRender("Backup imported successfully.");
-        } catch (error) {
-          APP.Controller.addAlert("danger", error.message + " What to do next: select a JSON file created by HomeOps.");
-          APP.Controller.render();
+        cleaned.warnings.slice(0, 15).forEach(function (w) { APP.Core.addAudit("warning", w); });
+        if (cleaned.skipped) {
+          APP.Core.addAudit("warning", cleaned.skipped + " blank or invalid row(s) skipped during import.");
         }
-      };
-
-      reader.readAsText(file);
+        APP.Controller.commit("Spreadsheet import: " + cleaned.rows.length + " item(s) added.", cleaned.rows.length + " item(s) imported" + (cleaned.warnings.length ? " — see Activity Log for warnings" : ""));
+      }).catch(function (error) {
+        APP.Dom.toast(error.message, "danger");
+      });
     }
   };
 

@@ -3,14 +3,14 @@
 
   APP.Dom = {
     refs: {},
+    toastTimer: null,
 
     init: function () {
       APP.Dom.refs = {
         viewRoot: document.getElementById("view-root"),
-        pageTitle: document.getElementById("page-title"),
-        alerts: document.getElementById("app-alerts"),
-        auditLog: document.getElementById("audit-log"),
-        saveStatus: document.getElementById("save-status"),
+        sheetRoot: document.getElementById("sheet-root"),
+        toast: document.getElementById("toast"),
+        printRoot: document.getElementById("print-root"),
         backupImport: document.getElementById("backup-import")
       };
     },
@@ -21,52 +21,56 @@
       }
     },
 
-    setText: function (key, text) {
-      if (APP.Dom.refs[key]) {
-        APP.Dom.refs[key].textContent = text;
-      }
-    },
-
-    queryAll: function (selector) {
-      return Array.prototype.slice.call(document.querySelectorAll(selector));
+    queryAll: function (selector, root) {
+      return Array.prototype.slice.call((root || document).querySelectorAll(selector));
     },
 
     closest: function (event, selector) {
       return event.target && event.target.closest ? event.target.closest(selector) : null;
     },
 
-    getFormData: function (form) {
-      return new FormData(form);
-    },
-
-    getFiles: function (event) {
-      return event.target && event.target.files ? event.target.files : [];
-    },
-
     setActiveNav: function (view) {
-      APP.Dom.queryAll(".nav-btn").forEach(function (button) {
-        button.classList.toggle("is-active", button.getAttribute("data-view") === view);
+      APP.Dom.queryAll("[data-nav]").forEach(function (link) {
+        link.classList.toggle("is-active", link.getAttribute("data-nav") === view);
       });
     },
 
-    onDocumentClick: function (handler) {
-      document.addEventListener("click", handler);
+    openSheet: function (html) {
+      var root = APP.Dom.refs.sheetRoot;
+      root.innerHTML = '<div class="sheet-backdrop" data-action="close-sheet"></div>' +
+        '<div class="sheet" role="dialog" aria-modal="true">' + html + "</div>";
+      root.classList.add("is-open");
+      document.body.classList.add("sheet-open");
+
+      var first = root.querySelector("input:not([type=hidden]):not([type=checkbox]), select, textarea");
+      if (first && window.matchMedia("(min-width: 760px)").matches) {
+        first.focus();
+      }
     },
 
-    onDocumentSubmit: function (handler) {
-      document.addEventListener("submit", handler);
+    closeSheet: function () {
+      var root = APP.Dom.refs.sheetRoot;
+      root.classList.remove("is-open");
+      root.innerHTML = "";
+      document.body.classList.remove("sheet-open");
+      APP.State.ui.sheet = null;
     },
 
-    onDocumentInput: function (handler) {
-      document.addEventListener("input", handler);
-    },
-
-    onDocumentChange: function (handler) {
-      document.addEventListener("change", handler);
+    toast: function (message, type) {
+      var el = APP.Dom.refs.toast;
+      if (!el || !message) {
+        return;
+      }
+      el.textContent = message;
+      el.className = "toast is-visible " + (type ? "toast-" + type : "");
+      clearTimeout(APP.Dom.toastTimer);
+      APP.Dom.toastTimer = setTimeout(function () {
+        el.className = "toast";
+      }, 2800);
     },
 
     download: function (filename, content, mimeType) {
-      var blob = new Blob([content], { type: mimeType || "text/plain;charset=utf-8" });
+      var blob = content instanceof Blob ? content : new Blob([content], { type: mimeType || "text/plain;charset=utf-8" });
       var url = URL.createObjectURL(blob);
       var anchor = document.createElement("a");
 
@@ -75,11 +79,7 @@
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
-      URL.revokeObjectURL(url);
-    },
-
-    print: function () {
-      window.print();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     }
   };
 }());
