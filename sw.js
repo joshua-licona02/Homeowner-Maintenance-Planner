@@ -1,6 +1,6 @@
 /* HomeOps service worker: makes the app installable and usable offline.
    Bump CACHE when shipping changes so phones pick up the new files. */
-var CACHE = "homeops-v3";
+var CACHE = "homeops-v4";
 
 var SHELL = [
   "./",

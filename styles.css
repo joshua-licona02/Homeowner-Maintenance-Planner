@@ -136,7 +136,7 @@ button:disabled { cursor: default; opacity: .5; }
   z-index: 50;
   height: var(--tab-h);
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   padding: 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--card) 82%, transparent);
@@ -155,9 +155,10 @@ button:disabled { cursor: default; opacity: .5; }
   justify-content: center;
   gap: 2px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 500;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .tabbar a .icon { width: 24px; height: 24px; }
