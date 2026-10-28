@@ -12,6 +12,7 @@
     warranties: function (m) { return APP.Views.warranties(m); },
     paints: function (m) { return APP.Views.paints(m); },
     projects: function (m, r) { return r.id ? APP.Views.project(m, r.id) : APP.Views.projects(m); },
+    floorplan: function () { return APP.FloorPlan.view(); },
     settings: function (m, r) {
       var sub = { home: "settingsHome", notifications: "settingsNotifications", users: "settingsUsers", data: "settingsData", activity: "settingsActivity" }[r.id];
       return sub ? APP.Views[sub](m) : APP.Views.settings(m);
@@ -30,6 +31,7 @@
       APP.Core.load();
       APP.Controller.applyTheme();
       APP.Controller.bindEvents();
+      APP.FloorPlan.bind();
       APP.Controller.route();
       APP.Core.save();
       APP.Reminders.start();
@@ -94,6 +96,8 @@
       APP.Dom.queryAll("img[data-thumb]").forEach(function (img) {
         APP.Files.thumbnail(img.getAttribute("data-thumb"), img);
       });
+
+      APP.FloorPlan.afterRender();
     },
 
     commit: function (auditMessage, toast) {
@@ -647,6 +651,10 @@
       });
     }
   };
+
+  // Floor plan & electrical panel clicks and form saves live in 13-floorplan.
+  Object.assign(APP.Controller.actions, APP.FloorPlan.actions);
+  Object.assign(APP.Controller.savers, APP.FloorPlan.savers);
 
   APP.Controller.init();
 }());

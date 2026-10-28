@@ -129,10 +129,14 @@
     },
 
     print: function (model, opts) {
+      APP.Reports.printHTML(APP.Reports.build(model, opts), APP.Utils.slugify(model.home.name) + "-" + opts.type + "-report-" + APP.Utils.todayISO());
+    },
+
+    printHTML: function (html, filename) {
       var root = APP.Dom.refs.printRoot;
       var previousTitle = document.title;
-      root.innerHTML = '<article class="report">' + APP.Reports.build(model, opts) + "</article>";
-      document.title = APP.Utils.slugify(model.home.name) + "-" + opts.type + "-report-" + APP.Utils.todayISO();
+      root.innerHTML = '<article class="report">' + html + "</article>";
+      document.title = filename;
       document.body.classList.add("printing-report");
 
       var cleanup = function () {

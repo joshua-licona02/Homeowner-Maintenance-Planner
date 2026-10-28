@@ -46,6 +46,10 @@
         paints: [],
         tasks: [],
         projects: [],
+        floors: [],
+        rooms: [],
+        devices: [],
+        panels: [],
         users: [{ id: "user-me", name: "Me", email: "", role: "Owner" }],
         currentUserId: "user-me",
         attachments: [],
@@ -112,6 +116,10 @@
         }
       ];
 
+      if (APP.FloorPlan) {
+        APP.FloorPlan.addSample(data);
+      }
+
       data.auditLog = [{ id: "log-welcome", time: new Date().toISOString(), type: "info", message: "HomeOps Planner initialized with example data." }];
       return data;
     },
@@ -139,6 +147,10 @@
       data.projects.forEach(function (project) {
         project.expenses = project.expenses || [];
         project.supplies = project.supplies || [];
+      });
+
+      data.panels.forEach(function (panel) {
+        panel.breakers = panel.breakers || [];
       });
 
       if (!data.users.length) {

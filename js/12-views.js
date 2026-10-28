@@ -177,7 +177,7 @@
         group("Warranties", warr + linkRow("View All Warranties", "#/warranties")) +
         "</div><div>" +
         group("Projects", proj) +
-        group("Quick Actions", actionRow("Create Report", "open-report", "report") + linkRow("Paint Colors", "#/paints", "palette") +
+        group("Quick Actions", actionRow("Create Report", "open-report", "report") + linkRow("Floor Plan & Electrical", "#/floorplan", "plan") + linkRow("Paint Colors", "#/paints", "palette") +
           linkRow("Notifications", "#/settings/notifications", "bell") + linkRow("Household", "#/settings/users", "users")) +
         "</div></div>";
 
@@ -199,7 +199,8 @@
       return page({
         title: "Locations",
         actions: addBtn("add-location", "Add Location"),
-        body: group("", rows || empty("Add rooms and areas like Kitchen, Basement, or Outside."), { footer: "Group inventory, paint colors, and tasks by room or area." })
+        body: group("", linkRow("Floor Plan & Electrical Panel", "#/floorplan", "plan")) +
+          group("", rows || empty("Add rooms and areas like Kitchen, Basement, or Outside."), { footer: "Group inventory, paint colors, and tasks by room or area." })
       });
     },
 
@@ -223,7 +224,8 @@
           group("Paints", paints.map(function (p) { return paintRow(p); }).join("") || empty("No paint colors recorded.")) +
           group("Maintenance", tasks.map(function (t) { return taskRow(t); }).join("") || empty("No open tasks.")) +
           (projects.length ? group("Projects", projects.map(projectRow).join("")) : "") +
-          (loc.notes ? group("Notes", '<div class="row notes">' + E(loc.notes) + "</div>") : "")
+          (loc.notes ? group("Notes", '<div class="row notes">' + E(loc.notes) + "</div>") : "") +
+          (APP.FloorPlan.roomForLocation(id) ? group("", actionRow("Show on Floor Plan", "fp-focus-location", "plan", ' data-id="' + id + '"')) : "")
       });
     },
 
@@ -264,13 +266,15 @@
       var history = [];
       tasks.forEach(function (t) { t.history.forEach(function (h) { history.push({ date: h.date, name: t.name, cost: h.cost, note: h.note }); }); });
       history = U.sortBy(history, "date").reverse();
+      var circuit = APP.FloorPlan.circuitForItem(id);
 
       return page({
         title: i.name,
         back: "#/inventory",
         actions: textBtn("edit-item", "Edit", ' data-id="' + id + '"'),
         body: '<div class="hero-icon">' + I.svg(i.category) + "</div>" +
-          group("", kv("Location", i.locationName, { href: m.locationMap[i.locationId] ? "#/locations/" + i.locationId : "" })) +
+          group("", kv("Location", i.locationName, { href: m.locationMap[i.locationId] ? "#/locations/" + i.locationId : "" }) +
+            (circuit ? kv("Breaker", circuit.label, { action: "fp-focus-item", id: id }) : "")) +
           group("Details", kv("Type", I.categoryLabel(i.category)) + kv("Brand", i.brand) + kv("Model", i.model) + kv("Serial Number", i.serial)) +
           group("Purchase Information", kv("Date", U.date(i.purchaseDate)) + kv("Price", i.purchasePrice !== "" && i.purchasePrice !== undefined ? U.currency(i.purchasePrice, true) : "") + kv("Store / Installer", i.store)) +
           group("Warranty", kv("Expires", wText, { valueCls: wCls }) + kv("Provider", i.warrantyProvider)) +

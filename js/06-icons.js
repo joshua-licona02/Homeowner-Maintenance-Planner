@@ -34,6 +34,7 @@
     list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1"/><circle cx="4.5" cy="12" r="1"/><circle cx="4.5" cy="18" r="1"/>',
     file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
     image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+    plan: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h6M12 3v6M12 13v8M15 13h6"/>',
 
     // Inventory categories
     hvac: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="14" cy="12" r="4.5"/><path d="M14 7.5v9M9.5 12h9M6 8h0M6 12h0M6 16h0"/>',
@@ -81,6 +82,11 @@
     svg: function (name, extraClass) {
       return '<svg class="icon ' + (extraClass || "") + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
         (paths[name] || paths.appliance) + "</svg>";
+    },
+
+    // Raw path markup, for embedding inside another SVG (the floor plan).
+    inner: function (name) {
+      return paths[name] || paths.appliance;
     },
 
     categoryLabel: function (value) {

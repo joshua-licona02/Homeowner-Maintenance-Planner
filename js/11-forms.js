@@ -163,6 +163,90 @@
         ] }
       ];
     },
+    floor: function () {
+      return [
+        { section: "Floor", fields: [
+          { name: "name", label: "Name", type: "text", required: true, placeholder: "e.g. Main Floor" },
+          { name: "width", label: "Width (ft)", type: "number", min: 4, step: "any", required: true },
+          { name: "depth", label: "Depth (ft)", type: "number", min: 4, step: "any", required: true }
+        ] },
+        { section: "Notes", fields: [{ name: "notes", label: "Notes", type: "textarea" }] }
+      ];
+    },
+    room: function () {
+      return [
+        { section: "Room", fields: [
+          { name: "name", label: "Name", type: "text", required: true, placeholder: "e.g. Kitchen" },
+          { name: "locationId", label: "Location", type: "select", options: locationOptions("None") },
+          { name: "floorId", label: "Floor", type: "select", options: APP.FloorPlan.options.floors() }
+        ] },
+        { section: "Size (feet)", fields: [
+          { name: "w", label: "Width", type: "number", min: 1, step: "any", required: true },
+          { name: "h", label: "Depth", type: "number", min: 1, step: "any", required: true }
+        ] },
+        { section: "Position (feet from top-left corner)", fields: [
+          { name: "x", label: "From Left", type: "number", min: 0, step: "any" },
+          { name: "y", label: "From Top", type: "number", min: 0, step: "any" }
+        ] }
+      ];
+    },
+    device: function () {
+      var FP = APP.FloorPlan.options;
+      return [
+        { section: "Device", fields: [
+          { name: "type", label: "Type", type: "select", options: FP.types() },
+          { name: "label", label: "Label", type: "text", placeholder: "e.g. Counter left" },
+          { name: "itemId", label: "Inventory Item", type: "select", options: FP.items(), showWhen: "type=appliance" },
+          { name: "breakerId", label: "Breaker", type: "select", options: FP.breakers() }
+        ] },
+        { section: "Footprint (feet)", fields: [
+          { name: "w", label: "Width", type: "number", min: 0.5, step: "any", showWhen: "type=appliance" },
+          { name: "h", label: "Depth", type: "number", min: 0.5, step: "any", showWhen: "type=appliance" }
+        ] },
+        { section: "Position (feet from top-left corner)", fields: [
+          { name: "floorId", label: "Floor", type: "select", options: FP.floors() },
+          { name: "x", label: "From Left", type: "number", min: 0, step: "any" },
+          { name: "y", label: "From Top", type: "number", min: 0, step: "any" }
+        ] },
+        { section: "Notes", fields: [{ name: "notes", label: "Notes", type: "textarea", placeholder: "Tripped often, on a GFCI downstream, wire gauge…" }] }
+      ];
+    },
+    panel: function () {
+      var FP = APP.FloorPlan.options;
+      return [
+        { section: "Panel", fields: [
+          { name: "name", label: "Label", type: "text", required: true, placeholder: "e.g. Main Panel, Garage Subpanel" },
+          { name: "kind", label: "Type", type: "select", options: FP.kinds() },
+          { name: "size", label: "Size", type: "select", options: FP.sizes() },
+          { name: "amps", label: "Main Rating (A)", type: "number", min: 1, showWhen: "size=custom" },
+          { name: "spaces", label: "Spaces", type: "number", min: 2, showWhen: "size=custom" }
+        ] },
+        { section: "Make & Model", fields: [
+          { name: "brand", label: "Brand / Line", type: "select", options: FP.brands() },
+          { name: "model", label: "Model", type: "text" }
+        ] },
+        { section: "Power", fields: [
+          { name: "feedBreakerId", label: "Fed From", type: "select", options: FP.breakers("Not fed from another panel"), showWhen: "kind=sub|lug" }
+        ] },
+        { section: "Where", fields: [
+          { name: "floorId", label: "Show On", type: "select", options: FP.floors("Not on the plan") },
+          { name: "notes", label: "Notes", type: "textarea", placeholder: "Location, installer, last inspection…" }
+        ] }
+      ];
+    },
+    breaker: function () {
+      var FP = APP.FloorPlan.options;
+      return [
+        { section: "Breaker", fields: [
+          { name: "label", label: "Label", type: "text", placeholder: "e.g. Kitchen counter" },
+          { name: "amps", label: "Size", type: "select", options: FP.amps() },
+          { name: "poles", label: "Poles", type: "select", options: [{ value: 1, label: "Single-pole (120V)" }, { value: 2, label: "Double-pole (240V)" }] },
+          { name: "type", label: "Type", type: "select", options: FP.breakerTypes() },
+          { name: "slot", label: "Slot #", type: "number", min: 1, required: true }
+        ] },
+        { section: "Notes", fields: [{ name: "notes", label: "Notes", type: "textarea" }] }
+      ];
+    },
     report: function () {
       return [
         { section: "", fields: [{ name: "type", label: "Type", type: "select", options: APP.Reports.types }] },
@@ -181,7 +265,9 @@
     home: ["Home Details", "Home Details"], location: ["Add Location", "Edit Location"], item: ["Add Item", "Edit Item"],
     paint: ["Add Paint", "Edit Paint"], task: ["Add Maintenance Task", "Edit Maintenance Task"], complete: ["Mark Complete", "Mark Complete"],
     project: ["Add Project", "Edit Project"], expense: ["Add Expense", "Edit Expense"], supply: ["Add Supply", "Edit Supply"],
-    user: ["Add User", "Edit User"], report: ["Create Report", "Create Report"]
+    user: ["Add User", "Edit User"], report: ["Create Report", "Create Report"],
+    floor: ["Add Floor", "Edit Floor"], room: ["Add Room", "Edit Room"], device: ["Add Device", "Edit Device"],
+    panel: ["Add Electrical Panel", "Edit Electrical Panel"], breaker: ["Add Breaker", "Edit Breaker"]
   };
 
   function renderField(f, value) {

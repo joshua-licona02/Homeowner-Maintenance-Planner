@@ -18,6 +18,8 @@ Then visit http://localhost:5173.
 | --- | --- |
 | **Dashboard** | Overdue / due-soon tasks, expiring warranties, active projects, quick actions |
 | **Locations** | Rooms and areas, each with its inventory, paint colors, tasks, and projects |
+| **Floor Plan** | Bird's-eye layout drawn to scale in feet, per floor: rooms, appliances, outlets, GFCIs, 240V outlets, switches, dimmers, lights, fans, and detectors. Drag to move, drag a corner to resize, or type exact dimensions |
+| **Electrical Panel** | Main panels and subpanels in common sizes (60A–225A, 8–42 spaces) or custom, with brand/model. Label each breaker (amps, single/double-pole, GFCI/AFCI). Tap a breaker to light up every outlet, switch, and light on that circuit, or tap a room to see which breakers feed it. Print a panel directory for the door |
 | **Inventory** | Unlimited items with brand, model, serial, purchase info, warranty, and photos/receipts |
 | **Maintenance** | One-time or recurring tasks (every N days/weeks/months/years). Completing a task logs date, cost, and notes, then schedules the next one |
 | **Warranties** | Active / expiring / expired, with a configurable heads-up window |
@@ -45,4 +47,5 @@ No build step. Plain JavaScript modules in `js/` share a single `APP` namespace 
 - `09-exports`, `10-reports` CSV/Excel/backup/merge and printable reports
 - `11-forms` add/edit sheets
 - `12-views` screens
+- `13-floorplan` floor plan, electrical panels, breaker-to-device mapping
 - `99-controller` routing, events, saving

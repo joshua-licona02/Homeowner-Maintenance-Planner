@@ -114,7 +114,7 @@
     merge: function (incoming) {
       var data = APP.State.data;
       var added = 0;
-      ["locations", "items", "paints", "tasks", "projects", "users"].forEach(function (key) {
+      ["locations", "items", "paints", "tasks", "projects", "users", "floors", "rooms", "devices", "panels"].forEach(function (key) {
         var existing = {};
         data[key].forEach(function (row, idx) { existing[row.id] = idx; });
         (incoming[key] || []).forEach(function (row) {
