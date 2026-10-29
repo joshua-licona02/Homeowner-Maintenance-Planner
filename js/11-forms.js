@@ -174,15 +174,24 @@
       ];
     },
     room: function () {
+      var FP = APP.FloorPlan.options;
       return [
         { section: "Room", fields: [
           { name: "name", label: "Name", type: "text", required: true, placeholder: "e.g. Kitchen" },
           { name: "locationId", label: "Location", type: "select", options: locationOptions("None") },
-          { name: "floorId", label: "Floor", type: "select", options: APP.FloorPlan.options.floors() }
+          { name: "floorId", label: "Floor", type: "select", options: FP.floors() }
+        ] },
+        { section: "Shape & Look", fields: [
+          { name: "shape", label: "Shape", type: "select", options: FP.shapes() },
+          { name: "walls", label: "Walls", type: "select", options: FP.walls() },
+          { name: "color", label: "Color", type: "select", options: FP.colors() }
         ] },
         { section: "Size (feet)", fields: [
-          { name: "w", label: "Width", type: "number", min: 1, step: "any", required: true },
-          { name: "h", label: "Depth", type: "number", min: 1, step: "any", required: true }
+          { name: "w", label: "Width", type: "number", min: 1, step: "any", required: true, showWhen: "shape=rect|L" },
+          { name: "h", label: "Depth", type: "number", min: 1, step: "any", required: true, showWhen: "shape=rect|L" },
+          { name: "cutCorner", label: "Cut-out Corner", type: "select", options: FP.corners(), showWhen: "shape=L" },
+          { name: "cutW", label: "Cut-out Width", type: "number", min: 0.5, step: "any", showWhen: "shape=L" },
+          { name: "cutH", label: "Cut-out Depth", type: "number", min: 0.5, step: "any", showWhen: "shape=L" }
         ] },
         { section: "Position (feet from top-left corner)", fields: [
           { name: "x", label: "From Left", type: "number", min: 0, step: "any" },

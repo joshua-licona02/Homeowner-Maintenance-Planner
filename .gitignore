@@ -1,0 +1,6 @@
+.firebase/
+.claude/
+node_modules/
+
+# Personal Firebase setup: copy js/cloud-config.example.js to create this.
+js/cloud-config.js

@@ -46,9 +46,49 @@
     { value: "surge", label: "Surge Protector", tag: "SP" }
   ];
 
-  APP.State.ui.fp = { floorId: "", panelId: "", mode: "view", tool: "", sel: null, ppf: 0, labels: false, colors: true, scroll: null };
+  // What the "Show" filter groups together.
+  var GROUPS = [
+    { id: "outlets", label: "Outlets", types: ["outlet", "gfci", "outlet240"] },
+    { id: "switches", label: "Switches", types: ["switch", "switch3", "dimmer"] },
+    { id: "lights", label: "Lights & Fans", types: ["light", "fan"] },
+    { id: "appliances", label: "Appliances", types: ["appliance"] },
+    { id: "safety", label: "Detectors", types: ["smoke"] },
+    { id: "other", label: "Junctions", types: ["other"] }
+  ];
+
+  var ROOM_COLORS = { blue: "#5ac8fa", green: "#34c759", yellow: "#ffcc00", orange: "#ff9500", red: "#ff6961", purple: "#bf5af2", gray: "#8e8e93", brown: "#a2845e" };
+  var SYMBOL_SIZES = { S: 0.75, M: 1, L: 1.35 };
+  var PREFS_KEY = "homeops-floorplan-view";
+
+  APP.State.ui.fp = { floorId: "", panelId: "", mode: "view", tool: "", sel: null, ppf: 0, labels: false, colors: true, size: "M", show: null, full: false, scroll: null };
+
+  // View choices (filter, labels, symbol size) are remembered per device.
+  try {
+    var saved = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    ["labels", "colors", "size", "show"].forEach(function (k) {
+      if (saved[k] !== undefined) {
+        APP.State.ui.fp[k] = saved[k];
+      }
+    });
+  } catch (err) { /* storage blocked */ }
+
+  function savePrefs() {
+    var st = APP.State.ui.fp;
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ labels: st.labels, colors: st.colors, size: st.size, show: st.show }));
+    } catch (err) { /* storage blocked */ }
+  }
 
   function ui() { return APP.State.ui.fp; }
+
+  function groupOf(type) {
+    return (GROUPS.filter(function (g) { return g.types.indexOf(type) > -1; })[0] || GROUPS[GROUPS.length - 1]).id;
+  }
+
+  function shown(type) {
+    var show = ui().show;
+    return !show || !show.length || show.indexOf(groupOf(type)) > -1;
+  }
 
   function num(v, fallback) {
     var n = Number(v);
@@ -114,9 +154,118 @@
     return { x: num(dev.x), y: num(dev.y) };
   }
 
+  // ---------- room shapes ----------
+  // A room is a rectangle (x, y, w, h) or, for L-shaped and custom rooms, a list of corner
+  // points relative to (x, y). w and h are always the bounding box.
+
+  function isPoly(room) {
+    return room.shape && room.shape !== "rect" && room.points && room.points.length >= 3;
+  }
+
+  function roomPoints(room) {
+    if (isPoly(room)) {
+      return room.points;
+    }
+    var w = num(room.w, 1);
+    var h = num(room.h, 1);
+    return [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+  }
+
+  function pathFor(points) {
+    return "M" + points.map(function (p) { return f3(p.x) + " " + f3(p.y); }).join("L") + "Z";
+  }
+
+  // Corner points for an L-shaped room: a w × h box with a cutW × cutH notch taken out of one corner.
+  function lPoints(w, h, cutW, cutH, corner) {
+    var cw = clamp(cutW, 0.5, w - 0.5);
+    var ch = clamp(cutH, 0.5, h - 0.5);
+    var pts = {
+      tr: [[0, 0], [w - cw, 0], [w - cw, ch], [w, ch], [w, h], [0, h]],
+      tl: [[cw, 0], [w, 0], [w, h], [0, h], [0, ch], [cw, ch]],
+      br: [[0, 0], [w, 0], [w, h - ch], [w - cw, h - ch], [w - cw, h], [0, h]],
+      bl: [[0, 0], [w, 0], [w, h], [cw, h], [cw, h - ch], [0, h - ch]]
+    }[corner] || [];
+    return pts.map(function (p) { return { x: +p[0].toFixed(2), y: +p[1].toFixed(2) }; });
+  }
+
+  // Keep points anchored at (0, 0) so x/y stay the top-left of the bounding box.
+  function normalizeRoom(room) {
+    if (!isPoly(room)) {
+      return;
+    }
+    var minX = Math.min.apply(null, room.points.map(function (p) { return p.x; }));
+    var minY = Math.min.apply(null, room.points.map(function (p) { return p.y; }));
+    room.points = room.points.map(function (p) { return { x: +(p.x - minX).toFixed(2), y: +(p.y - minY).toFixed(2) }; });
+    room.x = +(num(room.x) + minX).toFixed(2);
+    room.y = +(num(room.y) + minY).toFixed(2);
+    room.w = Math.max.apply(null, room.points.map(function (p) { return p.x; }));
+    room.h = Math.max.apply(null, room.points.map(function (p) { return p.y; }));
+  }
+
+  function roomArea(room) {
+    var pts = roomPoints(room);
+    var a = 0;
+    for (var i = 0; i < pts.length; i += 1) {
+      var j = (i + 1) % pts.length;
+      a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+    }
+    return Math.abs(a / 2);
+  }
+
+  function distToSeg(p, a, b) {
+    var dx = b.x - a.x;
+    var dy = b.y - a.y;
+    var t = dx || dy ? clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy), 0, 1) : 0;
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  function insidePoly(p, pts) {
+    var inside = false;
+    for (var i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+      if ((pts[i].y > p.y) !== (pts[j].y > p.y) && p.x < (pts[j].x - pts[i].x) * (p.y - pts[i].y) / (pts[j].y - pts[i].y) + pts[i].x) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
   function inRoom(pt, room) {
-    var e = 0.01;
-    return pt.x >= num(room.x) - e && pt.x <= num(room.x) + num(room.w) + e && pt.y >= num(room.y) - e && pt.y <= num(room.y) + num(room.h) + e;
+    var p = { x: pt.x - num(room.x), y: pt.y - num(room.y) };
+    var pts = roomPoints(room);
+    if (insidePoly(p, pts)) {
+      return true;
+    }
+    // Outlets and switches sit right on the wall line; count those as inside.
+    for (var i = 0; i < pts.length; i += 1) {
+      if (distToSeg(p, pts[i], pts[(i + 1) % pts.length]) < 0.05) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // A good spot for the room name: the point inside the shape farthest from its walls.
+  function labelSpot(room) {
+    var pts = roomPoints(room);
+    var w = num(room.w, 1);
+    var h = num(room.h, 1);
+    if (!isPoly(room)) {
+      return { x: w / 2, y: h * 0.3 };
+    }
+    var best = { x: w / 2, y: h / 2, d: -1 };
+    for (var i = 1; i < 16; i += 1) {
+      for (var j = 1; j < 16; j += 1) {
+        var p = { x: w * i / 16, y: h * j / 16 };
+        if (!insidePoly(p, pts)) {
+          continue;
+        }
+        var d = Math.min.apply(null, pts.map(function (a, k) { return distToSeg(p, a, pts[(k + 1) % pts.length]); }));
+        if (d > best.d) {
+          best = { x: p.x, y: p.y, d: d };
+        }
+      }
+    }
+    return best;
   }
 
   function devicesInRoom(room) {
@@ -296,23 +445,45 @@
     out.push(txt(-px(10), H / 2, fmtFt(H), "fp-dim-t", px(11), ' transform="rotate(-90 ' + f3(-px(10)) + " " + f3(H / 2) + ')"'));
 
     var roomLabels = [];
-    d.rooms.filter(function (r) { return r.floorId === floor.id; }).forEach(function (r) {
+    var rooms = d.rooms.filter(function (r) { return r.floorId === floor.id; });
+    // Open-concept zones draw first so walled rooms' solid lines stay on top.
+    rooms.sort(function (a, b) { return (b.walls === "open") - (a.walls === "open"); }).forEach(function (r) {
       var w = num(r.w, 1);
       var h = num(r.h, 1);
+      var poly = isPoly(r);
+      var pts = roomPoints(r);
       var big = w * ppf > 70 && h * ppf > 40;
-      out.push('<g class="fp-room' + (lit.rooms[r.id] ? " is-lit" : "") + (sel && sel.kind === "room" && sel.id === r.id ? " is-sel" : "") + '" data-fp-kind="room" data-fp-id="' + r.id + '" transform="translate(' + num(r.x) + " " + num(r.y) + ')">' +
-        "<title>" + E(r.name + " — " + fmtFt(w) + " × " + fmtFt(h)) + "</title>" +
-        '<rect class="fp-room-r" width="' + w + '" height="' + h + '"/>' +
-        (arrange ? handle(w, h) : "") + "</g>");
+      var dims = poly ? Math.round(roomArea(r)) + " sq ft" : fmtFt(w) + " × " + fmtFt(h);
+      var editing = arrange && !st.tool;
+      var handles = "";
+      if (editing && poly) {
+        // Corner handles to drag, and "+" handles on each wall to add a corner.
+        pts.forEach(function (p, i) {
+          var q = pts[(i + 1) % pts.length];
+          handles += '<circle class="fp-mid" data-fp-mid="' + i + '" cx="' + f3((p.x + q.x) / 2) + '" cy="' + f3((p.y + q.y) / 2) + '" r="' + px(6) + '"/>';
+        });
+        pts.forEach(function (p, i) {
+          handles += '<circle class="fp-vertex" data-fp-vertex="' + i + '" cx="' + f3(p.x) + '" cy="' + f3(p.y) + '" r="' + px(7) + '"/>';
+        });
+      } else if (editing) {
+        handles = handle(w, h);
+      }
+      out.push('<g class="fp-room' + (r.walls === "open" ? " is-open" : "") + (lit.rooms[r.id] ? " is-lit" : "") + (sel && sel.kind === "room" && sel.id === r.id ? " is-sel" : "") + '"' +
+        (ROOM_COLORS[r.color] ? ' style="--room:' + ROOM_COLORS[r.color] + '"' : "") +
+        ' data-fp-kind="room" data-fp-id="' + r.id + '" transform="translate(' + num(r.x) + " " + num(r.y) + ')">' +
+        "<title>" + E(r.name + " — " + dims) + "</title>" +
+        '<path class="fp-room-r" d="' + pathFor(pts) + '"/>' + handles + "</g>");
       // Names sit on top of everything so appliances along the wall never hide them; shortened when the room is too narrow.
-      var fit = Math.max(3, Math.floor((w * ppf - 6) / 7));
+      var spot = labelSpot(r);
+      var fit = Math.max(3, Math.floor(((poly ? Math.min(w, spot.d * 2 || w) : w) * ppf - 6) / 7));
       var name = r.name.length > fit ? r.name.slice(0, fit - 1) + "…" : r.name;
+      var ly = poly ? spot.y - px(4) : Math.max(px(16), spot.y);
       roomLabels.push('<g class="fp-room-label" data-fp-label="' + r.id + '" transform="translate(' + num(r.x) + " " + num(r.y) + ')">' +
-        txt(w / 2, Math.max(px(16), h * 0.3), name, "fp-room-name", px(12)) +
-        (big ? txt(w / 2, Math.max(px(16), h * 0.3) + px(13), fmtFt(w) + " × " + fmtFt(h), "fp-room-dim", px(10)) : "") + "</g>");
+        txt(spot.x, ly, name, "fp-room-name", px(12)) +
+        (big ? txt(spot.x, ly + px(13), dims, "fp-room-dim", px(10)) : "") + "</g>");
     });
 
-    var devs = d.devices.filter(function (x) { return x.floorId === floor.id; });
+    var devs = d.devices.filter(function (x) { return x.floorId === floor.id && shown(x.type); });
 
     devs.filter(function (x) { return x.type === "appliance"; }).forEach(function (dev) {
       var w = num(dev.w, 2.5);
@@ -337,7 +508,7 @@
     });
 
     // Symbols shrink a little when zoomed far out so a whole floor stays readable on a phone.
-    var r = px(clamp(ppf * 0.75, 6, 10));
+    var r = px(clamp(ppf * 0.75, 6, 10) * (SYMBOL_SIZES[st.size] || 1));
     devs.filter(function (x) { return x.type !== "appliance"; }).forEach(function (dev) {
       var showLabel = st.labels || lit.devices[dev.id];
       out.push('<g class="fp-dev fp-sym' + cls(dev) + '" style="--c:' + colorFor(dev) + '" data-fp-kind="device" data-fp-id="' + dev.id + '" transform="translate(' + num(dev.x) + " " + num(dev.y) + ')">' + title(dev) +
@@ -517,7 +688,7 @@
       var inside = devicesInRoom(rm);
       var loc = rm.locationId ? APP.Core.find("locations", rm.locationId) : null;
       var feeding = idx.list.filter(function (x) { return lit.breakers[x.b.id]; });
-      return '<div class="fp-sel-head"><span class="row-icon accent">' + I.svg("locations") + "</span><div><small>Room · " + fmtFt(rm.w) + " × " + fmtFt(rm.h) + " · " + Math.round(num(rm.w) * num(rm.h)) + " sq ft</small><h3>" + E(rm.name) + "</h3></div>" + close + "</div>" +
+      return '<div class="fp-sel-head"><span class="row-icon accent">' + I.svg("locations") + "</span><div><small>Room · " + (isPoly(rm) ? "" : fmtFt(rm.w) + " × " + fmtFt(rm.h) + " · ") + Math.round(roomArea(rm)) + " sq ft" + (rm.walls === "open" ? " · open plan" : "") + "</small><h3>" + E(rm.name) + "</h3></div>" + close + "</div>" +
         (inside.length ? '<p class="fp-sum">' + E(countSummary(inside)) + "</p>" : "") +
         grp("Fed by", feeding.map(function (x) {
           var n = inside.filter(function (dv) { return dv.breakerId === x.b.id; }).length;
@@ -605,9 +776,16 @@
         return '<button type="button" role="tab" aria-selected="' + (st.mode === m[0]) + '" class="' + (st.mode === m[0] ? "is-active" : "") + '" data-action="fp-mode" data-id="' + m[0] + '">' + m[1] + "</button>";
       }).join("") + "</div>" : "";
 
-      var view = '<div class="fp-bar">' + chip("fp-zoom", "out", "−", false, ' aria-label="Zoom out" title="Zoom out"') + chip("fp-zoom", "fit", "Fit", false, ' title="Fit to screen"') +
-        chip("fp-zoom", "in", "+", false, ' aria-label="Zoom in" title="Zoom in"') +
-        chip("fp-labels", "", "Labels", st.labels) + chip("fp-colors", "", "Circuit Colors", st.colors) + "</div>";
+      var onFloor = d.devices.filter(function (x) { return x.floorId === floor.id; });
+      var filter = '<div class="fp-bar fp-scroll" role="group" aria-label="Show">' + '<span class="fp-bar-label">Show</span>' +
+        chip("fp-show", "all", "All", !st.show || !st.show.length) +
+        GROUPS.map(function (g) {
+          var n = onFloor.filter(function (x) { return g.types.indexOf(x.type) > -1; }).length;
+          return n ? chip("fp-show", g.id, E(g.label) + ' <span class="chip-n">' + n + "</span>", !!(st.show && st.show.indexOf(g.id) > -1)) : "";
+        }).join("") + "</div>";
+
+      var view = '<div class="fp-bar fp-scroll">' + chip("fp-labels", "", "Labels", st.labels) + chip("fp-colors", "", "Circuit Colors", st.colors) +
+        chip("fp-size", "", "Symbols: " + ({ S: "Small", M: "Medium", L: "Large" }[st.size] || "Medium"), false, ' title="Change symbol size"') + "</div>";
 
       var selInfo = st.sel && st.sel.kind === "breaker" ? idx.breakers[st.sel.id] : null;
       var hint = "";
@@ -620,7 +798,7 @@
         hint = st.tool
           ? "Tap the plan to place " + (st.tool === "room" ? "a room" : st.tool === "panel" ? "a panel" : (/^[aeio]/i.test(TYPES[st.tool].label) ? "an " : "a ") + TYPES[st.tool].label.replace(/^(?!GFCI)\w/, function (c) { return c.toLowerCase(); })) + ". Tap the tool again or press Esc to stop." +
             (selInfo && st.tool !== "room" && st.tool !== "panel" ? " New devices connect to <b>" + E(breakerName(selInfo)) + "</b>." : "")
-          : "Drag rooms and devices to move them (devices inside a room move with it). Drag the corner handle to resize. Tap anything to edit exact sizes.";
+          : "Drag rooms and devices to move them (devices inside a room move with it). Drag the blue corner to resize. For L-shaped or custom rooms, drag the corner dots, tap a “+” on a wall to add a corner, or tap a corner to remove it. Tap anything to edit exact sizes and shape.";
       } else if (st.mode === "wire") {
         hint = selInfo
           ? "Connecting to <b>" + E(breakerName(selInfo)) + "</b> — tap devices to connect or disconnect them."
@@ -629,7 +807,16 @@
         hint = summaryLine(st.sel, idx, lit);
       }
 
-      var canvas = '<div class="fp-canvas">' + planSVG(floor, idx, lit, st) + "</div>";
+      // Map-style controls float over the plan; full screen gives the plan the whole display (best on a phone).
+      var float = '<div class="fp-float">' +
+        '<button type="button" class="fp-fbtn" data-action="fp-zoom" data-id="in" aria-label="Zoom in" title="Zoom in">' + I.svg("plus") + "</button>" +
+        '<button type="button" class="fp-fbtn" data-action="fp-zoom" data-id="out" aria-label="Zoom out" title="Zoom out"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M5 12h14"/></svg></button>' +
+        '<button type="button" class="fp-fbtn fp-fbtn-text" data-action="fp-zoom" data-id="fit" title="Fit the whole floor">Fit</button>' +
+        '<button type="button" class="fp-fbtn" data-action="fp-full" aria-label="' + (st.full ? "Exit full screen" : "Full screen") + '" title="' + (st.full ? "Exit full screen" : "Full screen") + '">' +
+          (st.full ? I.svg("close") : '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>') + "</button></div>";
+      var canvas = '<div class="fp-stage' + (st.full ? " is-full" : "") + '">' +
+        '<div class="fp-canvas">' + planSVG(floor, idx, lit, st) + "</div>" + float +
+        (st.full && hint ? '<p class="fp-full-hint">' + hint + "</p>" : "") + "</div>";
       var legend = '<div class="fp-legend">' + TYPE_ORDER.filter(function (t) { return t !== "appliance"; }).map(function (t) {
         return "<span>" + symbolIcon(t, "var(--text)") + E(TYPES[t].tool) + "</span>";
       }).join("") + '<span class="muted">Dashed = no breaker yet</span></div>';
@@ -645,7 +832,7 @@
 
       return shell(
         '<div class="fp-toolbar">' + floors + modes + "</div>" +
-        '<div class="fp-layout"><div class="fp-main-col"><div class="fp-toolbar">' + view + "</div>" + tools +
+        '<div class="fp-layout"><div class="fp-main-col">' + filter + view + tools +
           (hint ? '<p class="fp-hint">' + hint + "</p>" : "") + canvas + legend +
           '<div class="fp-selection">' + selectionHTML(idx, lit, st) + "</div></div>" + side + "</div>",
         E(floor.name) + " · " + fmtFt(floor.width) + " × " + fmtFt(floor.depth) + " · " + U.number(area) + " sq ft",
@@ -655,6 +842,7 @@
 
     afterRender: function () {
       var st = ui();
+      document.body.classList.toggle("fp-full-open", APP.State.route.view === "floorplan" && !!st.full);
       var canvas = APP.State.route.view === "floorplan" ? document.querySelector(".fp-canvas") : null;
       var floor = canvas && currentFloor();
       if (!floor) {
@@ -662,8 +850,9 @@
       }
       if (!st.ppf) {
         var fitW = (canvas.clientWidth - 64) / num(floor.width, 40);
-        var fitH = (Math.max(320, window.innerHeight * 0.68) - 90) / num(floor.depth, 30);
+        var fitH = ((st.full ? canvas.clientHeight : Math.max(320, window.innerHeight * 0.68)) - 90) / num(floor.depth, 30);
         st.ppf = clamp(+Math.min(fitW, fitH).toFixed(2), 4, 80);
+        st.scroll = null;
         APP.Controller.render();
         return;
       }
@@ -690,9 +879,37 @@
         }
       }, true);
       document.addEventListener("keydown", function (e) {
-        if (e.key === "Escape" && ui().tool && !APP.State.ui.sheet) {
+        if (e.key !== "Escape" || APP.State.ui.sheet || APP.State.route.view !== "floorplan") {
+          return;
+        }
+        if (ui().tool) {
           ui().tool = "";
           APP.Controller.render();
+        } else if (ui().full) {
+          APP.FloorPlan.actions["fp-full"]();
+        }
+      });
+
+      // Trackpad pinch (sent as ctrl + wheel) and ctrl/⌘ + mouse wheel zoom around the pointer.
+      document.addEventListener("wheel", function (e) {
+        var canvas = e.target.closest && e.target.closest(".fp-canvas");
+        if (!canvas || !(e.ctrlKey || e.metaKey)) {
+          return;
+        }
+        e.preventDefault();
+        zoomAt(ui().ppf * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+      }, { passive: false });
+
+      // Two-finger pinch on phones and tablets. The plan is scaled with CSS while the fingers move
+      // (smooth), then redrawn sharp at the new scale when they lift.
+      document.addEventListener("touchstart", onPinchStart, { passive: false });
+      document.addEventListener("touchmove", onPinchMove, { passive: false });
+      document.addEventListener("touchend", onPinchEnd);
+      document.addEventListener("touchcancel", onPinchEnd);
+      // Safari's own page zoom would fight the plan's zoom.
+      document.addEventListener("gesturestart", function (e) {
+        if (e.target.closest && e.target.closest(".fp-canvas")) {
+          e.preventDefault();
         }
       });
     },
@@ -700,6 +917,18 @@
     // Option lists for the add/edit forms.
     options: {
       types: function () { return TYPE_ORDER.map(function (t) { return { value: t, label: TYPES[t].label }; }); },
+      shapes: function () {
+        return [{ value: "rect", label: "Rectangle" }, { value: "L", label: "L-shape" }, { value: "custom", label: "Custom (drag corners on the plan)" }];
+      },
+      corners: function () {
+        return [{ value: "tr", label: "Top right" }, { value: "tl", label: "Top left" }, { value: "br", label: "Bottom right" }, { value: "bl", label: "Bottom left" }];
+      },
+      walls: function () {
+        return [{ value: "solid", label: "Solid walls" }, { value: "open", label: "Open (no walls, open-concept area)" }];
+      },
+      colors: function () {
+        return [{ value: "", label: "None" }].concat(Object.keys(ROOM_COLORS).map(function (c) { return { value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }; }));
+      },
       sizes: function () { return SIZES.map(function (s) { return { value: s[0], label: s[1] }; }); },
       kinds: function () { return KINDS; },
       brands: function () { return [{ value: "", label: "Unknown" }].concat(BRANDS.map(function (b) { return { value: b, label: b }; })); },
@@ -835,6 +1064,39 @@
       "fp-tool": function (id) {
         var st = ui();
         st.tool = st.tool === id ? "" : id;
+        // Placing something the filter hides would make it vanish; show its group.
+        if (st.tool && TYPES[st.tool] && !shown(st.tool)) {
+          st.show = st.show.concat(groupOf(st.tool));
+          savePrefs();
+        }
+        APP.Controller.render();
+      },
+      // "Show" filter: tapping a group while everything shows narrows to just that group;
+      // tapping more groups adds them; tapping an active group removes it.
+      "fp-show": function (id) {
+        var st = ui();
+        var show = st.show || [];
+        if (id === "all") {
+          show = null;
+        } else if (show.indexOf(id) > -1) {
+          show = show.filter(function (g) { return g !== id; });
+        } else {
+          show = show.concat(id);
+        }
+        st.show = show && show.length ? show : null;
+        savePrefs();
+        APP.Controller.render();
+      },
+      "fp-size": function () {
+        var st = ui();
+        st.size = { S: "M", M: "L", L: "S" }[st.size] || "M";
+        savePrefs();
+        APP.Controller.render();
+      },
+      "fp-full": function () {
+        var st = ui();
+        st.full = !st.full;
+        st.ppf = 0;
         APP.Controller.render();
       },
       "fp-floor": function (id) {
@@ -846,11 +1108,17 @@
       },
       "fp-zoom": function (id) {
         var st = ui();
-        st.ppf = id === "fit" ? 0 : clamp(+(st.ppf * (id === "in" ? 1.25 : 0.8)).toFixed(2), 4, 80);
-        APP.Controller.render();
+        var canvas = document.querySelector(".fp-canvas");
+        if (id === "fit" || !canvas) {
+          st.ppf = 0;
+          APP.Controller.render();
+          return;
+        }
+        var rect = canvas.getBoundingClientRect();
+        zoomAt(st.ppf * (id === "in" ? 1.3 : 1 / 1.3), rect.left + rect.width / 2, rect.top + rect.height / 2);
       },
-      "fp-labels": function () { ui().labels = !ui().labels; APP.Controller.render(); },
-      "fp-colors": function () { ui().colors = !ui().colors; APP.Controller.render(); },
+      "fp-labels": function () { ui().labels = !ui().labels; savePrefs(); APP.Controller.render(); },
+      "fp-colors": function () { ui().colors = !ui().colors; savePrefs(); APP.Controller.render(); },
       "fp-panel": function (id) { ui().panelId = id; APP.Controller.render(); },
       "fp-clear": function () { ui().sel = null; APP.Controller.render(); },
       "fp-unassigned": function () { ui().sel = { kind: "unassigned" }; APP.Controller.render(); },
@@ -1014,13 +1282,35 @@
         APP.Controller.commit((r.created ? "Floor added: " : "Floor updated: ") + v.name, r.created ? "Floor added — switch to Arrange to draw rooms" : "Saved");
       },
       room: function (v, id) {
+        var existing = id ? APP.Core.find("rooms", id) : null;
         v.x = num(v.x);
         v.y = num(v.y);
         v.w = Math.max(1, num(v.w, 10));
         v.h = Math.max(1, num(v.h, 10));
+        v.cutW = Math.max(0.5, num(v.cutW, v.w / 2));
+        v.cutH = Math.max(0.5, num(v.cutH, v.h / 2));
         v.floorId = v.floorId || ui().floorId;
+        if (v.shape === "L") {
+          if (v.cutW >= v.w || v.cutH >= v.h) {
+            APP.Dom.toast("The cut-out must be smaller than the room's width and depth.", "warning");
+            return;
+          }
+          v.points = lPoints(v.w, v.h, v.cutW, v.cutH, v.cutCorner);
+        } else if (v.shape === "custom") {
+          // Start custom shapes from the current outline; corners are then dragged on the plan.
+          v.points = existing && isPoly(existing) ? existing.points : roomPoints(v);
+        } else {
+          v.points = null;
+        }
         var r = APP.Controller.upsert("rooms", id, v, "room");
-        APP.Controller.commit((r.created ? "Room added: " : "Room updated: ") + v.name, r.created ? "Room added" : "Saved");
+        normalizeRoom(r.row);
+        var reshape = v.shape === "custom" && (!existing || !isPoly(existing));
+        if (reshape) {
+          ui().mode = "arrange";
+          ui().tool = "";
+        }
+        APP.Controller.commit((r.created ? "Room added: " : "Room updated: ") + v.name,
+          reshape ? "Drag the corner dots to shape the room. Tap a “+” to add a corner." : r.created ? "Room added" : "Saved");
       },
       device: function (v, id) {
         v.x = num(v.x);
@@ -1108,6 +1398,88 @@
     }
   };
 
+  // ---------- zoom ----------
+
+  // The plan's SVG has a fixed 30px margin, so a point x feet from the floor's left edge is
+  // drawn at x * ppf + 30 px inside the scrolling canvas.
+  var MARGIN = 30;
+
+  // Change the scale while keeping the floor point under (clientX, clientY) in place.
+  function zoomAt(newPpf, clientX, clientY, fromPpf, fromScroll, toClient) {
+    var st = ui();
+    var canvas = document.querySelector(".fp-canvas");
+    if (!canvas) {
+      return;
+    }
+    var rect = canvas.getBoundingClientRect();
+    var oldPpf = fromPpf || st.ppf;
+    var scroll = fromScroll || { l: canvas.scrollLeft, t: canvas.scrollTop };
+    var next = clamp(+newPpf.toFixed(2), 4, 80);
+    var fx = (clientX - rect.left + scroll.l - MARGIN) / oldPpf;
+    var fy = (clientY - rect.top + scroll.t - MARGIN) / oldPpf;
+    var to = toClient || { x: clientX, y: clientY };
+    st.ppf = next;
+    st.scroll = {
+      l: Math.max(0, fx * next + MARGIN - (to.x - rect.left)),
+      t: Math.max(0, fy * next + MARGIN - (to.y - rect.top))
+    };
+    APP.Controller.render();
+  }
+
+  var pinch = null;
+
+  function touchDist(t) {
+    return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  }
+
+  function touchMid(t) {
+    return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+  }
+
+  function onPinchStart(e) {
+    var canvas = e.target.closest && e.target.closest(".fp-canvas");
+    if (!canvas || e.touches.length !== 2) {
+      return;
+    }
+    e.preventDefault();
+    // A second finger turns a drag into a pinch; put anything mid-drag back.
+    var dragging = APP.FloorPlan.drag;
+    APP.FloorPlan.drag = null;
+    if (dragging && dragging.moved && dragging.movable) {
+      APP.Controller.render();
+      canvas = document.querySelector(".fp-canvas");
+    }
+    var svg = canvas.querySelector("svg");
+    var box = svg.getBoundingClientRect();
+    var mid = touchMid(e.touches);
+    pinch = { svg: svg, d0: touchDist(e.touches), mid0: mid, mid: mid, s: 1, ppf0: ui().ppf, scroll0: { l: canvas.scrollLeft, t: canvas.scrollTop } };
+    svg.style.transformOrigin = (mid.x - box.left) + "px " + (mid.y - box.top) + "px";
+  }
+
+  function onPinchMove(e) {
+    if (!pinch || e.touches.length !== 2) {
+      return;
+    }
+    e.preventDefault();
+    pinch.s = clamp(touchDist(e.touches) / pinch.d0, 4 / pinch.ppf0, 80 / pinch.ppf0);
+    pinch.mid = touchMid(e.touches);
+    pinch.svg.style.transform = "translate(" + (pinch.mid.x - pinch.mid0.x) + "px," + (pinch.mid.y - pinch.mid0.y) + "px) scale(" + pinch.s + ")";
+  }
+
+  function onPinchEnd(e) {
+    if (!pinch || e.touches.length >= 2) {
+      return;
+    }
+    var p = pinch;
+    pinch = null;
+    p.svg.style.transform = "";
+    APP.FloorPlan.drag = null;
+    if (Math.abs(p.s - 1) < 0.02 && Math.hypot(p.mid.x - p.mid0.x, p.mid.y - p.mid0.y) < 3) {
+      return;
+    }
+    zoomAt(p.ppf0 * p.s, p.mid0.x, p.mid0.y, p.ppf0, p.scroll0, p.mid);
+  }
+
   // ---------- pointer: tap, drag, resize ----------
 
   function toFt(svg, e) {
@@ -1124,7 +1496,8 @@
 
   function onDown(e) {
     var svg = e.target.closest ? e.target.closest("[data-fp-svg]") : null;
-    if (!svg || e.button > 0) {
+    // A second finger is the start of a pinch, handled by the touch listeners.
+    if (!svg || e.button > 0 || pinch || (APP.FloorPlan.drag && e.pointerType === "touch")) {
       return;
     }
     var st = ui();
@@ -1134,10 +1507,17 @@
     if (st.mode === "arrange" && !st.tool && g && APP.Core.canEdit()) {
       var obj = objFor(drag.kind, drag.id);
       var resize = !!e.target.closest("[data-fp-handle]");
+      var vertex = e.target.closest("[data-fp-vertex]");
+      var mid = e.target.closest("[data-fp-mid]");
       if (obj) {
         Object.assign(drag, { movable: true, obj: obj, resize: resize, ox: num(obj.x), oy: num(obj.y), ow: num(obj.w, 1), oh: num(obj.h, 1), kids: [],
           label: svg.querySelector('[data-fp-label="' + drag.id + '"]') });
-        if (drag.kind === "room" && !resize) {
+        if (drag.kind === "room" && (vertex || mid)) {
+          // Reshaping: drag a corner, or pull a new corner out of a wall.
+          drag.corner = Number((vertex || mid).getAttribute(vertex ? "data-fp-vertex" : "data-fp-mid"));
+          drag.mid = !!mid;
+          drag.pts = roomPoints(obj).map(function (p) { return { x: p.x, y: p.y }; });
+        } else if (drag.kind === "room" && !resize) {
           devicesInRoom(obj).forEach(function (x) {
             drag.kids.push({ obj: x, ox: num(x.x), oy: num(x.y), el: svg.querySelector('[data-fp-kind="device"][data-fp-id="' + x.id + '"]') });
           });
@@ -1154,7 +1534,7 @@
 
   function onMove(e) {
     var d = APP.FloorPlan.drag;
-    if (!d || (!d.moved && Math.abs(e.clientX - d.cx) + Math.abs(e.clientY - d.cy) < 5)) {
+    if (!d || pinch || (!d.moved && Math.abs(e.clientX - d.cx) + Math.abs(e.clientY - d.cy) < 5)) {
       return;
     }
     d.moved = true;
@@ -1170,15 +1550,33 @@
     var dx = snap(pt.x - d.pt.x, step);
     var dy = snap(pt.y - d.pt.y, step);
 
+    if (d.corner !== undefined) {
+      if (d.mid) {
+        d.corner += 1;
+        d.pts.splice(d.corner, 0, { x: 0, y: 0 });
+        d.mid = false;
+      }
+      d.pts[d.corner] = {
+        x: snap(clamp(pt.x, 0, W) - d.ox, 0.5),
+        y: snap(clamp(pt.y, 0, H) - d.oy, 0.5)
+      };
+      d.el.querySelector(".fp-room-r").setAttribute("d", pathFor(d.pts));
+      d.nx = d.ox;
+      return;
+    }
+
     if (d.resize) {
       d.nw = Math.max(d.kind === "room" ? 1 : 0.5, +(d.ow + dx).toFixed(2));
       d.nh = Math.max(d.kind === "room" ? 1 : 0.5, +(d.oh + dy).toFixed(2));
-      var rect = d.el.querySelector("rect");
       var hd = d.el.querySelector("[data-fp-handle]");
       var dim = d.label ? d.label.querySelector(".fp-room-dim") : null;
       var s = num(hd.getAttribute("width"));
-      rect.setAttribute("width", d.nw);
-      rect.setAttribute("height", d.nh);
+      if (d.kind === "room") {
+        d.el.querySelector(".fp-room-r").setAttribute("d", pathFor(roomPoints({ w: d.nw, h: d.nh })));
+      } else {
+        d.el.querySelector("rect").setAttribute("width", d.nw);
+        d.el.querySelector("rect").setAttribute("height", d.nh);
+      }
       hd.setAttribute("x", d.nw - s);
       hd.setAttribute("y", d.nh - s);
       if (dim) {
@@ -1210,6 +1608,43 @@
       return;
     }
     APP.FloorPlan.drag = null;
+
+    if (d.corner !== undefined && (d.moved || d.mid)) {
+      if (d.mid) {
+        // Tapped a "+": add a corner in the middle of that wall.
+        var a = d.pts[d.corner];
+        var b = d.pts[(d.corner + 1) % d.pts.length];
+        d.pts.splice(d.corner + 1, 0, { x: snap((a.x + b.x) / 2, 0.5), y: snap((a.y + b.y) / 2, 0.5) });
+      }
+      // Drop corners that landed on top of a neighbor.
+      d.obj.points = d.pts.filter(function (p, i) {
+        var q = d.pts[(i + 1) % d.pts.length];
+        return Math.abs(p.x - q.x) > 0.01 || Math.abs(p.y - q.y) > 0.01;
+      });
+      if (d.obj.points.length >= 3) {
+        d.obj.shape = "custom";
+        normalizeRoom(d.obj);
+        APP.Core.save();
+      } else {
+        d.obj.points = roomPoints({ w: d.ow, h: d.oh });
+      }
+      APP.Controller.render();
+      return;
+    }
+
+    if (d.corner !== undefined) {
+      // Tapped a corner: remove it.
+      if (d.pts.length <= 3) {
+        APP.Dom.toast("A room needs at least 3 corners.", "warning");
+      } else if (confirm("Remove this corner?")) {
+        d.pts.splice(d.corner, 1);
+        d.obj.points = d.pts;
+        d.obj.shape = "custom";
+        normalizeRoom(d.obj);
+        APP.Controller.commit("", "Corner removed");
+      }
+      return;
+    }
 
     if (d.moved) {
       if (d.movable && (d.nw !== undefined || d.nx !== undefined)) {

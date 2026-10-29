@@ -139,6 +139,45 @@
       }).join("") + "</div></div>";
   }
 
+  // Cloud sync (14-cloud loads after the first render, so APP.Cloud may not exist yet).
+  function cloudGroup() {
+    var C = APP.Cloud || {};
+    var status = '<span class="cloud-status" data-cloud-status data-state="' + E(C.status || "local") + '">' + E(C.label || "Checking…") + "</span>";
+    if (C.oldHost) {
+      return group("Sync Across Devices", '<div class="row notes">HomeOps now lives at <strong>' + E(C.homeUrl.replace(/^https:\/\/|\/$/g, "")) + "</strong>, where you can sign in and see the same home on your phone, iPad, and computer.</div>" +
+        actionRow("Move My Data to the New Address", "cloud-move", "upload") + actionRow("Open the New Address", "cloud-open-new", "home"),
+        { footer: "Moving sends this device's data straight to the new address. Photos and receipts stay here. Do this once on each device you've been using, then add the new address to your home screen." });
+    }
+    if (!C.enabled) {
+      return group("Sync Across Devices", kv("Status", status, { html: true }), { footer: "Data is saved in this browser. Download a backup regularly (Data › Backup)." });
+    }
+    if (C.user) {
+      return group("Sync Across Devices", kv("Signed In", C.user.email) + kv("Status", status, { html: true }) +
+        (C.status === "error" ? actionRow("Try Again", "cloud-sign-in", "history") : "") +
+        actionRow("Sign Out", "cloud-sign-out", "users"),
+        { footer: "Every change saves to the cloud and shows up on your other devices, even after app updates. Works offline and catches up when you reconnect. Photos and receipts stay on the device they were added on." });
+    }
+    return group("Sync Across Devices", kv("Status", status, { html: true }) + actionRow("Sign In with Google", "cloud-sign-in", "users"),
+      { footer: "Sign in with the same Google account on your phone, iPad, and computer to see the same home everywhere." });
+  }
+
+  function cloudNotice() {
+    var C = APP.Cloud || {};
+    if (C.oldHost) {
+      return '<div class="notice"><span>' + I.svg("upload") + " HomeOps moved so it can sync across your devices.</span>" +
+        '<button type="button" class="pill-btn" data-action="cloud-move">Move My Data</button></div>';
+    }
+    if (C.enabled && C.status === "signed-out") {
+      return '<div class="notice"><span>' + I.svg("users") + " Sign in to sync your home between your phone, iPad, and computer.</span>" +
+        '<button type="button" class="pill-btn" data-action="cloud-sign-in">Sign In</button></div>';
+    }
+    if (C.enabled && C.status === "error") {
+      return '<div class="notice notice-warn"><span>' + I.svg("bell") + " " + E(C.label) + "</span>" +
+        '<a class="pill-btn" href="#/settings">Details</a></div>';
+    }
+    return "";
+  }
+
   // ---------- views ----------
 
   APP.Views = {
@@ -172,7 +211,7 @@
 
       var proj = (activeProjects.slice(0, 3).map(projectRow).join("") || empty("No active projects.")) + linkRow("View All Projects", "#/projects");
 
-      var body = notice + stats + '<div class="dash-grid"><div>' +
+      var body = cloudNotice() + notice + stats + '<div class="dash-grid"><div>' +
         group("Maintenance", maint) +
         group("Warranties", warr + linkRow("View All Warranties", "#/warranties")) +
         "</div><div>" +
@@ -431,7 +470,8 @@
       var used = APP.Files.usedBytes();
       return page({
         title: "Settings",
-        body: group("Home", linkRow(m.home.name, "#/settings/home", "home", E(m.home.address || ""))) +
+        body: cloudGroup() +
+          group("Home", linkRow(m.home.name, "#/settings/home", "home", E(m.home.address || ""))) +
           group("Household", linkRow("Users & Sharing", "#/settings/users", "users", m.users.length + " member" + (m.users.length === 1 ? "" : "s")) +
             kv("Acting As", E(user.name) + ' <span class="badge">' + E(user.role) + "</span>", { html: true })) +
           group("Planning", linkRow("Notifications", "#/settings/notifications", "bell", E(U.time12(m.settings.notifyTime))) +

@@ -1,0 +1,25 @@
+{
+  "hosting": {
+    "site": "homeops-licona",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      "**/.*",
+      "**/.*/**",
+      ".git/**",
+      ".claude/**",
+      ".firebase/**",
+      "**/node_modules/**",
+      "README.md",
+      "**/*.example",
+      "**/*.example.*"
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css|webmanifest)",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+      }
+    ]
+  }
+}
